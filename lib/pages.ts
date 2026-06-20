@@ -99,14 +99,82 @@ export function getPageBySlug(slug: string): Page | undefined {
   return loadPages().find((page) => page.slug === slug);
 }
 
-export function getOtherServicesInCity(page: Page): Page[] {
+export function getOtherServicesInCity(page: Page, limit?: number): Page[] {
   if (!page.city) {
     return [];
   }
 
-  return loadPages().filter(
+  const items = loadPages().filter(
     (p) => p.city === page.city && p.slug !== page.slug && p.slug && p.service
   );
+
+  return limit ? items.slice(0, limit) : items;
+}
+
+export const POPULAR_CITY_NAMES = [
+  "Калуга",
+  "Тверь",
+  "Владимир",
+  "Ярославль",
+  "Рязань",
+  "Москва",
+  "Тула",
+  "Смоленск",
+  "Брянск",
+  "Орёл",
+  "Липецк",
+  "Тамбов",
+  "Курск",
+  "Белгород",
+  "Воронеж",
+];
+
+export function getPopularCitiesForService(page: Page, limit = 12): Page[] {
+  const serviceSlug = getServiceSlug(page);
+  const others = loadPages().filter(
+    (p) =>
+      getServiceSlug(p) === serviceSlug &&
+      p.slug !== page.slug &&
+      p.slug &&
+      p.city &&
+      p.city !== page.city
+  );
+
+  const byCity = new Map(others.map((p) => [p.city, p]));
+  const picked: Page[] = [];
+  const seen = new Set<string>();
+
+  for (const cityName of POPULAR_CITY_NAMES) {
+    if (picked.length >= limit) break;
+    const match = byCity.get(cityName);
+    if (match && !seen.has(match.slug)) {
+      picked.push(match);
+      seen.add(match.slug);
+    }
+  }
+
+  if (picked.length < limit) {
+    const rest = seededShuffle(
+      others.filter((p) => !seen.has(p.slug)),
+      page.slug || serviceSlug
+    );
+    for (const p of rest) {
+      if (picked.length >= limit) break;
+      picked.push(p);
+      seen.add(p.slug);
+    }
+  }
+
+  return picked;
+}
+
+export function getSameServiceInOtherCities(page: Page, limit = 12): Page[] {
+  return getPopularCitiesForService(page, limit);
+}
+
+export function formatServiceInCity(item: Pick<Page, "service" | "cityPrepositional" | "city">): string {
+  const cityLabel = item.cityPrepositional || item.city || "городе";
+  return `${item.service || "Услуга"} в ${cityLabel}`;
 }
 
 function hashString(str: string): number {
@@ -128,15 +196,6 @@ function seededShuffle<T>(items: T[], seed: string): T[] {
   }
 
   return arr;
-}
-
-export function getSameServiceInOtherCities(page: Page, limit = 10): Page[] {
-  const serviceSlug = getServiceSlug(page);
-  const others = loadPages().filter(
-    (p) => getServiceSlug(p) === serviceSlug && p.slug !== page.slug && p.slug && p.city
-  );
-
-  return seededShuffle(others, page.slug || serviceSlug).slice(0, limit);
 }
 
 export function getPhoneHref(phone: unknown): string {

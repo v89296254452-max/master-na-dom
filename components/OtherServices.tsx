@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { Page } from "@/lib/pages";
+import { formatServiceInCity, type Page } from "@/lib/pages";
 import SectionHeading from "./service/SectionHeading";
 
 interface OtherServicesProps {
@@ -29,7 +29,7 @@ export default function OtherServices({ cityPrepositional, services }: OtherServ
               className="flex items-center justify-between rounded-xl bg-white border border-gray-border px-4 py-3.5 transition-colors hover:border-orange/30 hover:shadow-sm"
             >
               <span className="text-sm font-medium text-navy">
-                {service.service}
+                {formatServiceInCity(service)}
               </span>
               <span className="text-orange text-lg">&rarr;</span>
             </Link>

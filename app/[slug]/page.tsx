@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import LeadForm from "@/components/LeadForm";
 import OtherServices from "@/components/OtherServices";
-import SameServiceOtherCities from "@/components/SameServiceOtherCities";
+import PopularCities from "@/components/PopularCities";
 import Breadcrumbs from "@/components/service/Breadcrumbs";
 import DistrictsBlock from "@/components/service/DistrictsBlock";
 import FaqSection from "@/components/service/FaqSection";
@@ -18,7 +18,7 @@ import {
   getAllPages,
   getPageBySlug,
   getOtherServicesInCity,
-  getSameServiceInOtherCities,
+  getPopularCitiesForService,
   getPhone,
   getPhoneHref,
   getDistrictsList,
@@ -173,7 +173,8 @@ export default async function ServicePage({ params }: PageProps) {
   const serviceCards = getServiceCards(page);
   const seoSections = getPageSeoSections(page);
   const otherServices = getOtherServicesInCity(page);
-  const sameServiceOtherCities = getSameServiceInOtherCities(page);
+  const popularCitiesCount = Math.max(10, 15 - otherServices.length);
+  const popularCities = getPopularCitiesForService(page, popularCitiesCount);
   const cityPrepositional = page.cityPrepositional || page.city || "";
   const service = page.service || "Услуга";
 
@@ -230,10 +231,7 @@ export default async function ServicePage({ params }: PageProps) {
             services={otherServices}
           />
 
-          <SameServiceOtherCities
-            service={service}
-            pages={sameServiceOtherCities}
-          />
+          <PopularCities service={service} pages={popularCities} />
 
           <section
             id="lead-form"

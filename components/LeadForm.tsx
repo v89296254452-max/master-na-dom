@@ -14,11 +14,12 @@ declare global {
     ym?: (id: number, method: string, target: string) => void;
   }
 }
+const YM_COUNTER_ID = 110026692;
+const YM_GOAL = "lead_submit";
 
 function sendMetrikaGoal() {
-  const ymId = process.env.NEXT_PUBLIC_YM_ID;
-  if (ymId && typeof window !== "undefined" && window.ym) {
-    window.ym(Number(ymId), "reachGoal", "lead_form_submit");
+  if (typeof window !== "undefined" && typeof window.ym === "function") {
+    window.ym(YM_COUNTER_ID, "reachGoal", YM_GOAL);
   }
 }
 
