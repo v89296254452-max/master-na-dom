@@ -1,0 +1,41 @@
+import Link from "next/link";
+import type { Page } from "@/lib/pages";
+import SectionHeading from "./service/SectionHeading";
+
+interface SameServiceOtherCitiesProps {
+  service: string;
+  pages: Page[];
+}
+
+export default function SameServiceOtherCities({
+  service,
+  pages,
+}: SameServiceOtherCitiesProps) {
+  const items = (pages ?? []).filter((page) => page.slug && page.city);
+  if (items.length === 0) {
+    return null;
+  }
+
+  const serviceLabel = service || "Услуга";
+
+  return (
+    <section className="rounded-2xl bg-white border border-gray-border p-6 sm:p-8">
+      <SectionHeading title={`${serviceLabel} в других городах`} />
+      <ul className="grid gap-2 sm:grid-cols-2">
+        {items.map((page) => (
+          <li key={page.slug}>
+            <Link
+              href={`/${page.slug}`}
+              className="flex items-center justify-between rounded-xl bg-gray-card border border-gray-border px-4 py-3.5 transition-colors hover:border-orange/30 hover:shadow-sm"
+            >
+              <span className="text-sm font-medium text-navy">
+                {page.city}
+              </span>
+              <span className="text-orange text-lg">&rarr;</span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
