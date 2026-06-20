@@ -22,14 +22,32 @@ export const VK_AUTOMATION_ACTION_LABELS: Record<VkAutomationAction, string> = {
   save_result: "Сохранение результата",
 };
 
-export type VkAutomationJobStatus = "pending" | "running" | "success" | "failed";
+export type VkAutomationJobStatus = "pending" | "running" | "success" | "failed" | "skipped";
 
 export const VK_AUTOMATION_JOB_STATUSES: VkAutomationJobStatus[] = [
   "pending",
   "running",
   "success",
   "failed",
+  "skipped",
 ];
+
+export const VK_AUTOMATION_JOB_STATUS_LABELS: Record<VkAutomationJobStatus, string> = {
+  pending: "Pending",
+  running: "Running",
+  success: "Success",
+  failed: "Failed",
+  skipped: "Skipped",
+};
+
+export interface VkAutomationQueueStats {
+  total: number;
+  pending: number;
+  running: number;
+  success: number;
+  failed: number;
+  skipped: number;
+}
 
 export interface VkAutomationJob {
   id: string;
@@ -40,6 +58,7 @@ export interface VkAutomationJob {
   payload: Record<string, unknown>;
   result: Record<string, unknown>;
   error: string;
+  attempts: number;
   createdAt: string;
   updatedAt: string;
   startedAt: string;
@@ -55,4 +74,23 @@ export interface VkAutomationJobCompleteInput {
   status: "success" | "failed";
   result?: Record<string, unknown>;
   error?: string;
+  retry?: boolean;
+  maxAttempts?: number;
+}
+
+export type VkWorkerMode = "mock" | "real";
+
+export const VK_WORKER_MODES: VkWorkerMode[] = ["mock", "real"];
+
+export interface VkAutomationGenerateResult {
+  created: number;
+  skipped: number;
+  removed?: number;
+  errors: string[];
+  stats: VkAutomationQueueStats;
+}
+
+export interface VkAutomationClearResult {
+  removed: number;
+  stats: VkAutomationQueueStats;
 }

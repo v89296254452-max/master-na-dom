@@ -1,18 +1,57 @@
 /**
- * VK Automation Worker — mock mode.
- * Polls /api/vk-automation-queue, executes jobs locally without real VK API.
+ * VK Automation Worker — mock and real modes.
  *
- * Env:
- *   VK_WORKER_MODE=mock
- *   VK_WORKER_INTERVAL_MS=2000
+ * Env (from .env.local / .env or process env):
+ *   VK_WORKER_MODE=mock|real
+ *   VK_WORKER_INTERVAL_MS=5000
+ *   VK_WORKER_MAX_ATTEMPTS=3
  *   NEXT_PUBLIC_APP_URL=http://localhost:3000
  */
 
-const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000").replace(/\/+$/, "");
-const WORKER_MODE = (process.env.VK_WORKER_MODE || "mock").trim().toLowerCase();
-const INTERVAL_MS = Math.max(500, Number(process.env.VK_WORKER_INTERVAL_MS) || 2000);
+import fs from "fs";
+import path from "path";
+import { executeMockJob } from "../lib/vk-automation-worker-mock";
+import { executeRealJob, formatVkError } from "../lib/vk-automation-worker-real";
+import type { VkAutomationAction } from "../lib/vk-automation-queue-types";
 
-const SUPPORTED_ACTIONS = [
+function loadEnvFile(filename: string): void {
+  const filePath = path.join(process.cwd(), filename);
+  if (!fs.existsSync(filePath)) return;
+
+  const content = fs.readFileSync(filePath, "utf-8");
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+
+    const eq = trimmed.indexOf("=");
+    if (eq <= 0) continue;
+
+    const key = trimmed.slice(0, eq).trim();
+    let value = trimmed.slice(eq + 1).trim();
+
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+
+    if (process.env[key] === undefined) {
+      process.env[key] = value;
+    }
+  }
+}
+
+loadEnvFile(".env");
+loadEnvFile(".env.local");
+
+const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000").replace(/\/+$/, "");
+const QUEUE_API_URL = `${APP_URL}/api/vk-automation-queue`;
+const WORKER_MODE = (process.env.VK_WORKER_MODE || "mock").trim().toLowerCase() === "real" ? "real" : "mock";
+const INTERVAL_MS = Math.max(500, Number(process.env.VK_WORKER_INTERVAL_MS) || 5000);
+const MAX_ATTEMPTS = Math.max(1, Number(process.env.VK_WORKER_MAX_ATTEMPTS) || 3);
+
+const SUPPORTED_ACTIONS: VkAutomationAction[] = [
   "login_account",
   "create_group",
   "fill_description",
@@ -21,16 +60,15 @@ const SUPPORTED_ACTIONS = [
   "publish_pinned_post",
   "publish_post",
   "save_result",
-] as const;
-
-type AutomationAction = (typeof SUPPORTED_ACTIONS)[number];
+];
 
 interface AutomationJob {
   id: string;
   taskId: string;
   accountId: string;
-  action: AutomationAction;
+  action: VkAutomationAction;
   status: string;
+  attempts: number;
   payload?: Record<string, unknown>;
 }
 
@@ -44,6 +82,16 @@ interface ClaimResponse {
 interface CompleteResponse {
   success: boolean;
   error?: string;
+  job?: { status: string; attempts: number };
+}
+
+interface FetchJsonResult<T> {
+  ok: boolean;
+  status: number;
+  url: string;
+  data: T | null;
+  rawText?: string;
+  isJson: boolean;
 }
 
 function timestamp(): string {
@@ -51,27 +99,72 @@ function timestamp(): string {
 }
 
 function log(message: string): void {
-  console.log(`[${timestamp()}] ${message}`);
+  console.log(`[${timestamp()}] [mode=${WORKER_MODE}] ${message}`);
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function randomMockDelayMs(): number {
-  return 1000 + Math.floor(Math.random() * 1000);
-}
-
-function isSupportedAction(value: string): value is AutomationAction {
+function isSupportedAction(value: string): value is VkAutomationAction {
   return (SUPPORTED_ACTIONS as readonly string[]).includes(value);
 }
 
-async function claimNextJob(): Promise<ClaimResponse> {
-  const res = await fetch(`${APP_URL}/api/vk-automation-queue`, { method: "PATCH" });
-  const data = (await res.json()) as ClaimResponse;
+async function fetchJson<T>(url: string, init?: RequestInit): Promise<FetchJsonResult<T>> {
+  const response = await fetch(url, init);
 
-  if (!res.ok || !data.success) {
-    throw new Error(data.error || `PATCH failed with status ${res.status}`);
+  console.log("STATUS", response.status);
+  console.log("URL", response.url);
+
+  const contentType = response.headers.get("content-type") || "";
+
+  if (!contentType.includes("application/json")) {
+    const rawText = await response.text();
+    console.log(rawText);
+    return {
+      ok: response.ok,
+      status: response.status,
+      url: response.url,
+      data: null,
+      rawText,
+      isJson: false,
+    };
+  }
+
+  const data = (await response.json()) as T;
+  return {
+    ok: response.ok,
+    status: response.status,
+    url: response.url,
+    data,
+    isJson: true,
+  };
+}
+
+function formatNonJsonError(method: string, result: FetchJsonResult<unknown>): string {
+  const preview = result.rawText?.slice(0, 300).replace(/\s+/g, " ").trim() || "(empty body)";
+  return [
+    `${method} ${QUEUE_API_URL} returned non-JSON (HTTP ${result.status}).`,
+    `Final URL: ${result.url}`,
+    `Expected API route: app/api/vk-automation-queue/route.ts (PATCH/PUT).`,
+    `Check NEXT_PUBLIC_APP_URL=${APP_URL} — dev server must be running on this port.`,
+    `Body preview: ${preview}`,
+  ].join(" ");
+}
+
+async function claimNextJob(): Promise<ClaimResponse | null> {
+  const result = await fetchJson<ClaimResponse>(QUEUE_API_URL, { method: "PATCH" });
+
+  if (!result.isJson || !result.data) {
+    log(formatNonJsonError("PATCH", result));
+    return null;
+  }
+
+  const data = result.data;
+
+  if (!result.ok || !data.success) {
+    log(data.error || `PATCH failed with status ${result.status}`);
+    return null;
   }
 
   return data;
@@ -81,72 +174,59 @@ async function completeJob(
   jobId: string,
   status: "success" | "failed",
   result?: Record<string, unknown>,
-  error?: string
-): Promise<CompleteResponse> {
-  const res = await fetch(`${APP_URL}/api/vk-automation-queue`, {
+  error?: string,
+  options?: { retry?: boolean }
+): Promise<CompleteResponse | null> {
+  const response = await fetchJson<CompleteResponse>(QUEUE_API_URL, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jobId, status, result, error }),
+    body: JSON.stringify({
+      jobId,
+      status,
+      result,
+      error,
+      retry: options?.retry === true,
+      maxAttempts: MAX_ATTEMPTS,
+    }),
   });
 
-  const data = (await res.json()) as CompleteResponse;
+  if (!response.isJson || !response.data) {
+    log(formatNonJsonError("PUT", response));
+    return null;
+  }
 
-  if (!res.ok || !data.success) {
-    throw new Error(data.error || `PUT failed with status ${res.status}`);
+  const data = response.data;
+
+  if (!response.ok || !data.success) {
+    log(data.error || `PUT failed with status ${response.status}`);
+    return null;
   }
 
   return data;
 }
 
-function buildMockResult(job: AutomationJob): Record<string, unknown> {
-  const base = {
-    mock: true,
-    message: "Action completed in mock mode",
+async function executeJob(job: AutomationJob): Promise<Record<string, unknown>> {
+  const workerJob = {
+    id: job.id,
+    taskId: job.taskId,
+    accountId: job.accountId,
+    action: job.action,
+    payload: job.payload,
   };
 
-  if (job.action === "create_group") {
-    return {
-      ...base,
-      vkUrl: `https://vk.com/club_mock_${job.taskId}`,
-      vkGroupId: `mock_${job.taskId}`,
-    };
+  if (WORKER_MODE === "mock") {
+    return executeMockJob(workerJob);
   }
 
-  if (job.action === "save_result") {
-    const payload = job.payload ?? {};
-    const vkUrl =
-      typeof payload.vkUrl === "string" && payload.vkUrl.trim()
-        ? payload.vkUrl.trim()
-        : `https://vk.com/club_mock_${job.taskId}`;
-    const vkGroupId =
-      typeof payload.vkGroupId === "string" && payload.vkGroupId.trim()
-        ? payload.vkGroupId.trim()
-        : `mock_${job.taskId}`;
-    const taskStatus =
-      payload.taskStatus === "posted" || payload.taskStatus === "created"
-        ? payload.taskStatus
-        : "created";
-
-    return {
-      ...base,
-      vkUrl,
-      vkGroupId,
-      taskStatus,
-    };
-  }
-
-  return base;
-}
-
-async function executeMockJob(job: AutomationJob): Promise<Record<string, unknown>> {
-  const delayMs = randomMockDelayMs();
-  log(`EXECUTE action=${job.action} taskId=${job.taskId} accountId=${job.accountId} delay=${delayMs}ms`);
-  await sleep(delayMs);
-  return buildMockResult(job);
+  return executeRealJob(workerJob);
 }
 
 async function processOnce(): Promise<boolean> {
   const claim = await claimNextJob();
+
+  if (!claim) {
+    return false;
+  }
 
   if (!claim.job) {
     log("No pending automation jobs");
@@ -157,28 +237,48 @@ async function processOnce(): Promise<boolean> {
 
   if (!isSupportedAction(job.action)) {
     log(
-      `FAILED job=${job.id} action=${job.action} taskId=${job.taskId} accountId=${job.accountId} error=Unsupported action`
+      `FAILED action=${job.action} taskId=${job.taskId} accountId=${job.accountId} error=Unsupported action`
     );
     await completeJob(job.id, "failed", undefined, `Unsupported action: ${job.action}`);
     return true;
   }
 
-  log(`CLAIMED job=${job.id} action=${job.action} taskId=${job.taskId} accountId=${job.accountId}`);
+  log(`CLAIMED job=${job.id} action=${job.action} taskId=${job.taskId} accountId=${job.accountId} attempts=${job.attempts}`);
 
   try {
-    if (WORKER_MODE !== "mock") {
-      throw new Error(`Mode "${WORKER_MODE}" is not implemented. Use VK_WORKER_MODE=mock`);
+    const result = await executeJob(job);
+    const completed = await completeJob(job.id, "success", result);
+
+    if (!completed) {
+      log(`WARN job=${job.id} executed but PUT completion failed — check API URL`);
+      return true;
     }
 
-    const result = await executeMockJob(job);
-    await completeJob(job.id, "success", result);
+    if (WORKER_MODE === "real") {
+      log(`VK API success action=${job.action} taskId=${job.taskId} accountId=${job.accountId}`);
+    }
+
     log(`SUCCESS job=${job.id} action=${job.action} taskId=${job.taskId} accountId=${job.accountId}`);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown worker error";
-    log(`FAILED job=${job.id} action=${job.action} taskId=${job.taskId} accountId=${job.accountId} error=${message}`);
+    const message = formatVkError(error);
+    const canRetry = job.attempts < MAX_ATTEMPTS;
+
+    if (WORKER_MODE === "real") {
+      log(`VK API error action=${job.action} taskId=${job.taskId} accountId=${job.accountId} error=${message}`);
+    }
+
+    log(
+      `FAILED job=${job.id} action=${job.action} taskId=${job.taskId} accountId=${job.accountId} attempts=${job.attempts}/${MAX_ATTEMPTS} error=${message}${canRetry ? " retry=pending" : ""}`
+    );
 
     try {
-      await completeJob(job.id, "failed", undefined, message);
+      const complete = await completeJob(job.id, "failed", undefined, message, { retry: canRetry });
+      if (complete?.job?.status === "pending") {
+        log(`RETRY scheduled job=${job.id} action=${job.action} taskId=${job.taskId}`);
+      }
+      if (!complete) {
+        log(`WARN job=${job.id} failure not reported to API — check API URL`);
+      }
     } catch (completeError) {
       const completeMessage =
         completeError instanceof Error ? completeError.message : "Failed to report job failure";
@@ -190,7 +290,11 @@ async function processOnce(): Promise<boolean> {
 }
 
 async function runLoop(): Promise<void> {
-  log(`VK Automation Worker started mode=${WORKER_MODE} url=${APP_URL} interval=${INTERVAL_MS}ms`);
+  log(`VK Automation Worker started`);
+  log(`APP_URL=${APP_URL}`);
+  log(`QUEUE PATCH ${QUEUE_API_URL}`);
+  log(`QUEUE PUT   ${QUEUE_API_URL}`);
+  log(`interval=${INTERVAL_MS}ms maxAttempts=${MAX_ATTEMPTS}`);
 
   while (true) {
     try {

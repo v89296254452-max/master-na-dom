@@ -27,8 +27,10 @@ import VkTemplatesPanel from "./VkTemplatesPanel";
 import VkVisualTemplatesPanel from "./VkVisualTemplatesPanel";
 import VkAntiDuplicatePanel from "./VkAntiDuplicatePanel";
 import VkBatchAssignPanel from "./VkBatchAssignPanel";
+import VkAutomationPanel from "./VkAutomationPanel";
+import VkApiDiagnosticsPanel from "./VkApiDiagnosticsPanel";
 
-type ViewMode = "table" | "operator" | "accounts" | "log" | "dashboard" | "export" | "templates" | "visuals" | "antiduplicates" | "assignment";
+type ViewMode = "table" | "operator" | "accounts" | "log" | "dashboard" | "export" | "templates" | "visuals" | "antiduplicates" | "assignment" | "automation" | "diagnostics";
 type GroupFilter = "all" | VkAccountGroup;
 type StatusFilter = "all" | VkTaskStatus;
 
@@ -193,6 +195,8 @@ function ModeSwitcher({
           { value: "visuals" as const, label: "Визуалы" },
           { value: "antiduplicates" as const, label: "Антидубли" },
           { value: "assignment" as const, label: "Распределение" },
+          { value: "automation" as const, label: "Автоматизация" },
+          { value: "diagnostics" as const, label: "Диагностика VK API" },
         ] as const
       ).map((item) => (
         <button
@@ -1572,7 +1576,7 @@ export default function VkTasksTable() {
     await loadAccounts();
   }
 
-  if (loading && viewMode !== "accounts" && viewMode !== "log" && viewMode !== "dashboard" && viewMode !== "export" && viewMode !== "templates" && viewMode !== "visuals" && viewMode !== "antiduplicates" && viewMode !== "assignment") {
+  if (loading && viewMode !== "accounts" && viewMode !== "log" && viewMode !== "dashboard" && viewMode !== "export" && viewMode !== "templates" && viewMode !== "visuals" && viewMode !== "antiduplicates" && viewMode !== "assignment" && viewMode !== "automation" && viewMode !== "diagnostics") {
     return (
       <div className="rounded-xl border border-gray-border bg-gray-card px-6 py-12 text-center text-navy-muted">
         Загрузка задач...
@@ -1584,7 +1588,7 @@ export default function VkTasksTable() {
     <div className="space-y-5 sm:space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <ModeSwitcher mode={viewMode} onChange={setViewMode} />
-        {viewMode !== "accounts" && viewMode !== "log" && viewMode !== "dashboard" && viewMode !== "export" && viewMode !== "templates" && viewMode !== "visuals" && viewMode !== "antiduplicates" && viewMode !== "assignment" ? (
+        {viewMode !== "accounts" && viewMode !== "log" && viewMode !== "dashboard" && viewMode !== "export" && viewMode !== "templates" && viewMode !== "visuals" && viewMode !== "antiduplicates" && viewMode !== "assignment" && viewMode !== "automation" && viewMode !== "diagnostics" ? (
           <div className="text-sm text-navy-muted">
             В работе: <strong className="text-navy">{stats.statuses.in_progress ?? 0}</strong>
             {" · "}
@@ -1629,6 +1633,10 @@ export default function VkTasksTable() {
         />
       ) : viewMode === "assignment" ? (
         <VkBatchAssignPanel tasks={tasks} onAssigned={handleBatchAssigned} />
+      ) : viewMode === "automation" ? (
+        <VkAutomationPanel />
+      ) : viewMode === "diagnostics" ? (
+        <VkApiDiagnosticsPanel />
       ) : (
         <>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">

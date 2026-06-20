@@ -2,11 +2,16 @@ import fs from "fs";
 import path from "path";
 import type {
   VkAutomationAction,
+  VkAutomationClearResult,
+  VkAutomationGenerateResult,
   VkAutomationJob,
   VkAutomationJobCompleteInput,
   VkAutomationJobStatus,
+  VkAutomationQueueStats,
 } from "./vk-automation-queue-types";
 import { VK_AUTOMATION_ACTIONS } from "./vk-automation-queue-types";
+import { isAccountEligibleForAssignment } from "./vk-account-auth";
+import { getVkAccountById, readVkAccountsFile } from "./vk-accounts";
 import { appendVkTaskLogEntry } from "./vk-task-log";
 import type { VkTaskStatus } from "./vk-task-types";
 import { VK_TASK_STATUSES } from "./vk-task-types";
@@ -23,7 +28,18 @@ function isAutomationAction(value: unknown): value is VkAutomationAction {
 }
 
 function isJobStatus(value: unknown): value is VkAutomationJobStatus {
-  return value === "pending" || value === "running" || value === "success" || value === "failed";
+  return (
+    value === "pending" ||
+    value === "running" ||
+    value === "success" ||
+    value === "failed" ||
+    value === "skipped"
+  );
+}
+
+function toAttempts(value: unknown): number {
+  const num = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(num) && num >= 0 ? Math.floor(num) : 0;
 }
 
 function normalizeRecord(value: unknown): Record<string, unknown> {
@@ -53,6 +69,7 @@ function normalizeJob(raw: Partial<VkAutomationJob>): VkAutomationJob | null {
     payload: normalizeRecord(raw.payload),
     result: normalizeRecord(raw.result),
     error: typeof raw.error === "string" ? raw.error : "",
+    attempts: toAttempts(raw.attempts),
     createdAt: typeof raw.createdAt === "string" ? raw.createdAt : timestamp,
     updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : timestamp,
     startedAt: typeof raw.startedAt === "string" ? raw.startedAt : "",
@@ -87,6 +104,263 @@ export function ensureVkAutomationQueueFile(): VkAutomationJob[] {
   }
 
   return readVkAutomationQueueFile();
+}
+
+export function computeAutomationQueueStats(jobs: VkAutomationJob[]): VkAutomationQueueStats {
+  return {
+    total: jobs.length,
+    pending: jobs.filter((job) => job.status === "pending").length,
+    running: jobs.filter((job) => job.status === "running").length,
+    success: jobs.filter((job) => job.status === "success").length,
+    failed: jobs.filter((job) => job.status === "failed").length,
+    skipped: jobs.filter((job) => job.status === "skipped").length,
+  };
+}
+
+export function getRecentAutomationJobs(jobs: VkAutomationJob[], limit = 100): VkAutomationJob[] {
+  return [...jobs]
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .slice(0, limit);
+}
+
+const AUTOMATION_PIPELINE: Array<{ action: VkAutomationAction; payload?: Record<string, unknown> }> = [
+  { action: "login_account" },
+  { action: "create_group" },
+  { action: "fill_description" },
+  { action: "upload_avatar" },
+  { action: "upload_cover" },
+  { action: "publish_pinned_post" },
+  { action: "publish_post", payload: { postKey: "post2" } },
+  { action: "publish_post", payload: { postKey: "post3" } },
+  { action: "publish_post", payload: { postKey: "post4" } },
+  { action: "publish_post", payload: { postKey: "post5" } },
+  { action: "save_result", payload: { taskStatus: "created" } },
+];
+
+function pipelineJobId(taskId: string, action: VkAutomationAction, payload?: Record<string, unknown>): string {
+  const postKey = typeof payload?.postKey === "string" ? payload.postKey : "";
+  return `${taskId}::${action}${postKey ? `::${postKey}` : ""}`;
+}
+
+function hasActivePipelineJob(jobs: VkAutomationJob[], jobId: string): boolean {
+  return jobs.some(
+    (job) =>
+      job.id === jobId &&
+      (job.status === "pending" || job.status === "running" || job.status === "success")
+  );
+}
+
+function createSkippedJob(
+  taskId: string,
+  accountId: string,
+  reason: string,
+  timestamp: string
+): VkAutomationJob {
+  return {
+    id: `skip-${taskId}-${timestamp}`,
+    taskId,
+    accountId: accountId || "—",
+    action: "save_result",
+    status: "skipped",
+    payload: {},
+    result: {},
+    error: reason,
+    attempts: 0,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    startedAt: "",
+    completedAt: timestamp,
+  };
+}
+
+function getInProgressTasks(tasks: ReturnType<typeof readVkTasksFile>, taskIds?: string[]) {
+  let filtered = tasks.filter((task) => task.status === "in_progress");
+
+  if (taskIds && taskIds.length > 0) {
+    const idSet = new Set(taskIds);
+    filtered = filtered.filter((task) => idSet.has(task.id));
+  }
+
+  return filtered;
+}
+
+function appendPipelineJobsForTask(
+  jobs: VkAutomationJob[],
+  task: { id: string; assignedAccount: string },
+  accountId: string,
+  timestamp: string
+): number {
+  let taskJobsCreated = 0;
+
+  for (const step of AUTOMATION_PIPELINE) {
+    const jobId = pipelineJobId(task.id, step.action, step.payload);
+    if (hasActivePipelineJob(jobs, jobId)) continue;
+
+    const job = normalizeJob({
+      id: jobId,
+      taskId: task.id,
+      accountId,
+      action: step.action,
+      status: "pending",
+      payload: step.payload ?? {},
+      result: {},
+      error: "",
+      attempts: 0,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      startedAt: "",
+      completedAt: "",
+    });
+
+    if (!job) continue;
+
+    jobs.push(job);
+    taskJobsCreated += 1;
+  }
+
+  return taskJobsCreated;
+}
+
+function generateJobsForTasks(
+  jobs: VkAutomationJob[],
+  tasks: ReturnType<typeof readVkTasksFile>,
+  accounts: ReturnType<typeof readVkAccountsFile>,
+  errors: string[]
+): { created: number; skipped: number } {
+  const timestamp = nowIso();
+  let created = 0;
+  let skipped = 0;
+
+  for (const task of tasks) {
+    const accountId = task.assignedAccount.trim();
+
+    if (!accountId) {
+      errors.push(`${task.id}: не назначен assignedAccount`);
+      continue;
+    }
+
+    const account = getVkAccountById(accountId, accounts);
+    if (!account) {
+      errors.push(`${task.id}: аккаунт "${accountId}" не найден`);
+      continue;
+    }
+
+    if (!isAccountEligibleForAssignment(account)) {
+      jobs.push(
+        createSkippedJob(task.id, accountId, "Аккаунт не active или authStatus !== connected", timestamp)
+      );
+      skipped += 1;
+      continue;
+    }
+
+    const taskJobsCreated = appendPipelineJobsForTask(jobs, task, accountId, timestamp);
+    created += taskJobsCreated;
+
+    if (taskJobsCreated === 0) {
+      skipped += 1;
+    }
+  }
+
+  return { created, skipped };
+}
+
+export function clearAutomationQueueStatuses(
+  statuses: VkAutomationJobStatus[]
+): VkAutomationClearResult {
+  const statusSet = new Set(statuses);
+  const jobs = readVkAutomationQueueFile();
+  const before = jobs.length;
+  const remaining = jobs.filter((job) => !statusSet.has(job.status));
+  const removed = before - remaining.length;
+
+  writeVkAutomationQueueFile(remaining);
+
+  return {
+    removed,
+    stats: computeAutomationQueueStats(remaining),
+  };
+}
+
+const RECREATE_REMOVE_STATUSES: VkAutomationJobStatus[] = [
+  "pending",
+  "running",
+  "skipped",
+  "failed",
+  "success",
+];
+
+export function removeJobsForTasks(
+  jobs: VkAutomationJob[],
+  taskIds: Set<string>,
+  statuses: VkAutomationJobStatus[]
+): { jobs: VkAutomationJob[]; removed: number } {
+  const statusSet = new Set(statuses);
+  const before = jobs.length;
+  const remaining = jobs.filter(
+    (job) => !(taskIds.has(job.taskId) && statusSet.has(job.status))
+  );
+
+  return {
+    jobs: remaining,
+    removed: before - remaining.length,
+  };
+}
+
+export function recreateAutomationQueue(taskIds?: string[]): VkAutomationGenerateResult {
+  const tasks = readVkTasksFile();
+  const accounts = readVkAccountsFile();
+  const targetTasks = getInProgressTasks(tasks, taskIds);
+  const targetTaskIdSet = new Set(targetTasks.map((task) => task.id));
+  const errors: string[] = [];
+
+  if (targetTasks.length === 0) {
+    return {
+      created: 0,
+      skipped: 0,
+      removed: 0,
+      errors: taskIds?.length
+        ? ["Нет in_progress задач для указанных taskId"]
+        : ["Нет in_progress задач для пересоздания очереди"],
+      stats: computeAutomationQueueStats(readVkAutomationQueueFile()),
+    };
+  }
+
+  let jobs = readVkAutomationQueueFile();
+  const { jobs: afterRemove, removed } = removeJobsForTasks(
+    jobs,
+    targetTaskIdSet,
+    RECREATE_REMOVE_STATUSES
+  );
+  jobs = afterRemove;
+
+  const { created, skipped } = generateJobsForTasks(jobs, targetTasks, accounts, errors);
+  writeVkAutomationQueueFile(jobs);
+
+  return {
+    created,
+    skipped,
+    removed,
+    errors,
+    stats: computeAutomationQueueStats(jobs),
+  };
+}
+
+export function generateAutomationQueue(): VkAutomationGenerateResult {
+  const jobs = readVkAutomationQueueFile();
+  const accounts = readVkAccountsFile();
+  const tasks = readVkTasksFile();
+  const targetTasks = getInProgressTasks(tasks);
+  const errors: string[] = [];
+
+  const { created, skipped } = generateJobsForTasks(jobs, targetTasks, accounts, errors);
+  writeVkAutomationQueueFile(jobs);
+
+  return {
+    created,
+    skipped,
+    errors,
+    stats: computeAutomationQueueStats(jobs),
+  };
 }
 
 function isTaskStatus(value: unknown): value is VkTaskStatus {
@@ -140,6 +414,7 @@ export function claimNextPendingAutomationJob(jobs: VkAutomationJob[]): VkAutoma
   const claimed: VkAutomationJob = {
     ...jobs[index],
     status: "running",
+    attempts: jobs[index].attempts + 1,
     startedAt: timestamp,
     updatedAt: timestamp,
     error: "",
@@ -162,6 +437,24 @@ export function completeAutomationJob(
 
   const job = jobs[index];
   const timestamp = nowIso();
+  const maxAttempts = input.maxAttempts ?? 3;
+  const shouldRetry =
+    input.status === "failed" && input.retry === true && job.attempts < maxAttempts;
+
+  if (shouldRetry) {
+    const retried: VkAutomationJob = {
+      ...job,
+      status: "pending",
+      error: input.error?.trim() || "Automation failed",
+      updatedAt: timestamp,
+      startedAt: "",
+      completedAt: "",
+    };
+
+    jobs[index] = retried;
+    return retried;
+  }
+
   const status: VkAutomationJobStatus = input.status === "failed" ? "failed" : "success";
 
   const updated: VkAutomationJob = {
@@ -194,6 +487,7 @@ export function enqueueAutomationJob(
     status: input.status ?? "pending",
     result: {},
     error: "",
+    attempts: 0,
     createdAt: timestamp,
     updatedAt: timestamp,
     startedAt: "",
