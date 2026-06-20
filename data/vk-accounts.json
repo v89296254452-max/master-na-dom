@@ -1,0 +1,20 @@
+[
+  {
+    "id": "acc-01",
+    "name": "??????? 01",
+    "phone": "+7999",
+    "status": "active",
+    "dailyLimit": 10,
+    "totalLimit": 50,
+    "notes": "test"
+  },
+  {
+    "id": "02",
+    "name": "Веня Шаманов",
+    "phone": "+7 (986) 089-07-04",
+    "status": "active",
+    "dailyLimit": 10,
+    "totalLimit": 50,
+    "notes": ""
+  }
+]

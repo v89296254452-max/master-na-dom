@@ -16,11 +16,12 @@ export default function SameServiceOtherCities({
     return null;
   }
 
-  const serviceLabel = service || "Услуга";
-
   return (
     <section className="rounded-2xl bg-white border border-gray-border p-6 sm:p-8">
-      <SectionHeading title={`${serviceLabel} в других городах`} />
+      <SectionHeading
+        title={`${service} в других городах`}
+        subtitle="Эта же услуга с выездом мастера на дом"
+      />
       <ul className="grid gap-2 sm:grid-cols-2">
         {items.map((page) => (
           <li key={page.slug}>

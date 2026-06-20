@@ -17,7 +17,10 @@ export default function OtherServices({ cityPrepositional, services }: OtherServ
 
   return (
     <section className="rounded-2xl bg-gray-card border border-gray-border p-6 sm:p-8">
-      <SectionHeading title={`Другие услуги в ${cityLabel}`} />
+      <SectionHeading
+        title={`Другие услуги в ${cityLabel}`}
+        subtitle="Мастера по смежным направлениям в вашем городе"
+      />
       <ul className="grid gap-2 sm:grid-cols-2">
         {items.map((service) => (
           <li key={service.slug}>

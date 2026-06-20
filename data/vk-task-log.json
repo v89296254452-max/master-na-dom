@@ -1,0 +1,122 @@
+[
+  {
+    "id": "log_1781984725974_0_f90eplw",
+    "createdAt": "2026-06-20T19:45:25.974Z",
+    "taskId": "kp-barnaul",
+    "action": "assigned",
+    "oldStatus": "new",
+    "newStatus": "in_progress",
+    "assignedAccount": "acc-01",
+    "vkUrl": "",
+    "vkGroupId": "",
+    "message": "Batch assignment"
+  },
+  {
+    "id": "log_1781984725974_1_q38k4uo",
+    "createdAt": "2026-06-20T19:45:25.974Z",
+    "taskId": "kp-belgorod",
+    "action": "assigned",
+    "oldStatus": "new",
+    "newStatus": "in_progress",
+    "assignedAccount": "acc-01",
+    "vkUrl": "",
+    "vkGroupId": "",
+    "message": "Batch assignment"
+  },
+  {
+    "id": "log_1781984725974_2_mt8fwyc",
+    "createdAt": "2026-06-20T19:45:25.974Z",
+    "taskId": "kp-bryansk",
+    "action": "assigned",
+    "oldStatus": "new",
+    "newStatus": "in_progress",
+    "assignedAccount": "acc-01",
+    "vkUrl": "",
+    "vkGroupId": "",
+    "message": "Batch assignment"
+  },
+  {
+    "id": "log_1781984725974_3_oyg27u4",
+    "createdAt": "2026-06-20T19:45:25.974Z",
+    "taskId": "kp-velikiy-novgorod",
+    "action": "assigned",
+    "oldStatus": "new",
+    "newStatus": "in_progress",
+    "assignedAccount": "acc-01",
+    "vkUrl": "",
+    "vkGroupId": "",
+    "message": "Batch assignment"
+  },
+  {
+    "id": "log_1781984725974_4_dq1pnie",
+    "createdAt": "2026-06-20T19:45:25.974Z",
+    "taskId": "kp-vladivostok",
+    "action": "assigned",
+    "oldStatus": "new",
+    "newStatus": "in_progress",
+    "assignedAccount": "acc-01",
+    "vkUrl": "",
+    "vkGroupId": "",
+    "message": "Batch assignment"
+  },
+  {
+    "id": "log_1781984725974_5_nptm5fe",
+    "createdAt": "2026-06-20T19:45:25.974Z",
+    "taskId": "kp-vladimir",
+    "action": "assigned",
+    "oldStatus": "new",
+    "newStatus": "in_progress",
+    "assignedAccount": "acc-01",
+    "vkUrl": "",
+    "vkGroupId": "",
+    "message": "Batch assignment"
+  },
+  {
+    "id": "log_1781984725974_6_4jplheh",
+    "createdAt": "2026-06-20T19:45:25.974Z",
+    "taskId": "kp-volgograd",
+    "action": "assigned",
+    "oldStatus": "new",
+    "newStatus": "in_progress",
+    "assignedAccount": "acc-01",
+    "vkUrl": "",
+    "vkGroupId": "",
+    "message": "Batch assignment"
+  },
+  {
+    "id": "log_1781984725974_7_ye2zfru",
+    "createdAt": "2026-06-20T19:45:25.974Z",
+    "taskId": "kp-vologda",
+    "action": "assigned",
+    "oldStatus": "new",
+    "newStatus": "in_progress",
+    "assignedAccount": "acc-01",
+    "vkUrl": "",
+    "vkGroupId": "",
+    "message": "Batch assignment"
+  },
+  {
+    "id": "log_1781984725974_8_g0toaf6",
+    "createdAt": "2026-06-20T19:45:25.974Z",
+    "taskId": "kp-voronezh",
+    "action": "assigned",
+    "oldStatus": "new",
+    "newStatus": "in_progress",
+    "assignedAccount": "acc-01",
+    "vkUrl": "",
+    "vkGroupId": "",
+    "message": "Batch assignment"
+  },
+  {
+    "id": "log_1781984725974_9_bkp8vee",
+    "createdAt": "2026-06-20T19:45:25.974Z",
+    "taskId": "kp-ekaterinburg",
+    "action": "assigned",
+    "oldStatus": "new",
+    "newStatus": "in_progress",
+    "assignedAccount": "acc-01",
+    "vkUrl": "",
+    "vkGroupId": "",
+    "message": "Batch assignment"
+  }
+]

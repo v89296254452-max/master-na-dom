@@ -7,6 +7,9 @@ export const metadata: Metadata = {
   metadataBase: new URL(getSiteUrl()),
   title: "Master Leads — бытовые услуги",
   description: "Вызов мастера на дом: сантехник, электрик, ремонт техники. Работаем по всем районам.",
+  verification: {
+    yandex: "e6f0a54a781c1bb3",
+  },
 };
 
 export default function RootLayout({

@@ -10,7 +10,9 @@
     "lint": "next lint",
     "generate:pages": "tsx scripts/import-geo.ts",
     "import:geo": "tsx scripts/import-geo.ts",
-    "verify:deploy": "tsx scripts/verify-deploy.ts"
+    "verify:deploy": "tsx scripts/verify-deploy.ts",
+    "generate:vk": "tsx scripts/generate-vk-plan.ts",
+    "vk:worker": "tsx scripts/vk-automation-worker.ts"
   },
   "dependencies": {
     "csv-parse": "^5.6.0",

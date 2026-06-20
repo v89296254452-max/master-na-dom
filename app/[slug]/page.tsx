@@ -3,15 +3,17 @@ import { notFound } from "next/navigation";
 import LeadForm from "@/components/LeadForm";
 import OtherServices from "@/components/OtherServices";
 import SameServiceOtherCities from "@/components/SameServiceOtherCities";
+import Breadcrumbs from "@/components/service/Breadcrumbs";
 import DistrictsBlock from "@/components/service/DistrictsBlock";
 import FaqSection from "@/components/service/FaqSection";
 import HowWeWork from "@/components/service/HowWeWork";
 import PriceTable from "@/components/service/PriceTable";
 import SeoExtraContent from "@/components/service/SeoExtraContent";
+import SeoListSection from "@/components/service/SeoListSection";
+import SeoUniqueText from "@/components/service/SeoUniqueText";
 import ServiceCards from "@/components/service/ServiceCards";
 import ServiceHero from "@/components/service/ServiceHero";
 import StickyCallBar from "@/components/service/StickyCallBar";
-import WhenNeedMaster from "@/components/service/WhenNeedMaster";
 import {
   getAllPages,
   getPageBySlug,
@@ -24,9 +26,9 @@ import {
   getFaqs,
   type Page,
 } from "@/lib/pages";
+import { getPageSeoSections } from "@/lib/page-seo";
 import { getSiteUrl } from "@/lib/site";
 import { getServiceCards } from "@/lib/service-ui";
-import { getWhenNeedMasterBlock, getRemainingSeoBlocks } from "@/lib/seo-content";
 
 interface PageProps {
   params: Promise<{ slug: string }>;
@@ -60,6 +62,44 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
       locale: "ru_RU",
     },
   };
+}
+
+function BreadcrumbJsonLd({
+  page,
+  service,
+  cityPrepositional,
+}: {
+  page: Page;
+  service: string;
+  cityPrepositional: string;
+}) {
+  const siteUrl = getSiteUrl();
+
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: [
+      {
+        "@type": "ListItem",
+        position: 1,
+        name: "Главная",
+        item: siteUrl,
+      },
+      {
+        "@type": "ListItem",
+        position: 2,
+        name: `${service} в ${cityPrepositional}`,
+        item: `${siteUrl}/${page.slug}`,
+      },
+    ],
+  };
+
+  return (
+    <script
+      type="application/ld+json"
+      dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+    />
+  );
 }
 
 function LocalBusinessJsonLd({ page }: { page: Page }) {
@@ -131,8 +171,7 @@ export default async function ServicePage({ params }: PageProps) {
   const prices = getPrices(page);
   const faqs = getFaqs(page);
   const serviceCards = getServiceCards(page);
-  const whenNeedMaster = getWhenNeedMasterBlock(page);
-  const extraSeoBlocks = getRemainingSeoBlocks(page);
+  const seoSections = getPageSeoSections(page);
   const otherServices = getOtherServicesInCity(page);
   const sameServiceOtherCities = getSameServiceInOtherCities(page);
   const cityPrepositional = page.cityPrepositional || page.city || "";
@@ -140,18 +179,42 @@ export default async function ServicePage({ params }: PageProps) {
 
   return (
     <>
+      <BreadcrumbJsonLd page={page} service={service} cityPrepositional={cityPrepositional} />
       <LocalBusinessJsonLd page={page} />
       <FaqJsonLd page={page} />
 
       <div className="min-h-screen pb-24 md:pb-0">
         <main className="mx-auto max-w-3xl px-4 py-6 sm:py-8 space-y-6 sm:space-y-8">
+          <Breadcrumbs service={service} cityPrepositional={cityPrepositional} />
+
           <ServiceHero page={page} phone={phone} phoneHref={phoneHref} />
+
+          <SeoUniqueText
+            title={seoSections.uniqueText.title}
+            paragraphs={seoSections.uniqueText.paragraphs}
+          />
 
           <ServiceCards service={service} cards={serviceCards} />
 
-          {prices.length > 0 && <PriceTable prices={prices} />}
+          <SeoListSection
+            title={seoSections.typicalProblems.title}
+            intro={seoSections.typicalProblems.paragraphs}
+            items={seoSections.typicalProblems.listItems}
+          />
 
-          <WhenNeedMaster title={whenNeedMaster.title} content={whenNeedMaster.content} />
+          <SeoListSection
+            title={seoSections.beforeCallChecklist.title}
+            intro={seoSections.beforeCallChecklist.paragraphs}
+            items={seoSections.beforeCallChecklist.listItems}
+          />
+
+          <SeoListSection
+            title={seoSections.popularRequests.title}
+            intro={seoSections.popularRequests.paragraphs}
+            items={seoSections.popularRequests.listItems}
+          />
+
+          {prices.length > 0 && <PriceTable prices={prices} />}
 
           <HowWeWork />
 
@@ -190,7 +253,7 @@ export default async function ServicePage({ params }: PageProps) {
             </div>
           </section>
 
-          <SeoExtraContent blocks={extraSeoBlocks} />
+          <SeoExtraContent blocks={seoSections.supplementaryBlocks} />
         </main>
 
         <StickyCallBar phone={phone} phoneHref={phoneHref} />
