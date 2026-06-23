@@ -14,6 +14,7 @@
     "verify:deploy": "tsx scripts/verify-deploy.ts",
     "generate:dzen": "tsx scripts/generate-dzen-articles.ts",
     "export:dzen-queue": "tsx scripts/export-dzen-queue.ts",
+    "export:pages-registry": "tsx scripts/export-pages-registry.ts",
     "generate:vk": "tsx scripts/generate-vk-plan.ts",
     "vk:import-old-db": "tsx scripts/vk-import-old-db.ts",
     "vk:import-all": "tsx scripts/vk-import-all.ts",

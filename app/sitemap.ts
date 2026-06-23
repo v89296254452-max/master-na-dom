@@ -2,6 +2,9 @@ import type { MetadataRoute } from "next";
 import { getAllPages } from "@/lib/pages";
 import { getSiteUrl } from "@/lib/site";
 
+/** Sitemap читает CSV; обновляется раз в сутки вместе с ISR-страницами */
+export const revalidate = 86400;
+
 export default function sitemap(): MetadataRoute.Sitemap {
   const siteUrl = getSiteUrl();
   const pages = getAllPages();

@@ -15,7 +15,6 @@ import ServiceCards from "@/components/service/ServiceCards";
 import ServiceHero from "@/components/service/ServiceHero";
 import StickyCallBar from "@/components/service/StickyCallBar";
 import {
-  getAllPages,
   getPageBySlug,
   getOtherServicesInCity,
   getPopularCitiesForService,
@@ -34,9 +33,11 @@ interface PageProps {
   params: Promise<{ slug: string }>;
 }
 
-export async function generateStaticParams() {
-  return getAllPages().map((page) => ({ slug: page.slug }));
-}
+/** ISR: страницы создаются при первом визите, кеш 24 ч */
+export const revalidate = 86400;
+
+/** Разрешить slug, не попавшие в build (все генерируются on-demand) */
+export const dynamicParams = true;
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { slug } = await params;
