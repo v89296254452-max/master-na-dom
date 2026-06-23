@@ -109,14 +109,16 @@ export default function VkDashboardPanel() {
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
-          <StatCard label="Всего" value={overall.total} />
-          <StatCard label={VK_TASK_STATUS_LABELS.new} value={overall.new} accent="muted" />
-          <StatCard label={VK_TASK_STATUS_LABELS.in_progress} value={overall.in_progress} />
-          <StatCard label={VK_TASK_STATUS_LABELS.created} value={overall.created} />
-          <StatCard label={VK_TASK_STATUS_LABELS.filled} value={overall.filled} />
-          <StatCard label={VK_TASK_STATUS_LABELS.posted} value={overall.posted} accent="success" />
-          <StatCard label={VK_TASK_STATUS_LABELS.error} value={overall.error} accent="danger" />
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          <StatCard label="Всего задач" value={overall.total} />
+          <StatCard label="Создано групп" value={overall.groupsCreated} />
+          <StatCard
+            label="Готово к запуску"
+            value={overall.readyForWorker}
+            accent="warning"
+          />
+          <StatCard label="Опубликовано" value={overall.posted} accent="success" />
+          <StatCard label="Ошибки" value={overall.error} accent="danger" />
         </div>
       </section>
 

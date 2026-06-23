@@ -1,15 +1,10 @@
-import type { VkAutomationAction } from "./vk-automation-queue-types";
+import { VkWorkerSkipError, assertTaskReadyForWorkerAction, type WorkerJob } from "./vk-automation-worker-types";
+import { readVkTasksFile } from "./vk-tasks";
+import { normalizeVkGroupId, buildVkClubUrl } from "./vk-api-client";
 
-export interface WorkerJob {
-  id: string;
-  taskId: string;
-  accountId: string;
-  action: VkAutomationAction;
-  payload?: Record<string, unknown>;
-}
+export type { WorkerJob } from "./vk-automation-worker-types";
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function sleep(ms: number): Promise<void> {  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function randomMockDelayMs(): number {
@@ -22,28 +17,64 @@ export function buildMockResult(job: WorkerJob): Record<string, unknown> {
     message: "Action completed in mock mode",
   };
 
-  if (job.action === "create_group") {
+  if (job.action === "need_manual_check") {
     return {
       ...base,
-      vkUrl: `https://vk.com/club_mock_${job.taskId}`,
-      vkGroupId: `mock_${job.taskId}`,
+      skipped: true,
+      message: "Не удалось распознать vkGroupId из vkUrl",
+    };
+  }
+
+  if (job.action === "need_manual_create") {
+    return {
+      ...base,
+      skipped: true,
+      message: "Нужно вручную создать группу и указать vkGroupId",
+    };
+  }
+
+  if (job.action === "create_group") {
+    const tasks = readVkTasksFile();
+    const task = tasks.find((item) => item.id === job.taskId);
+    const groupId = task ? normalizeVkGroupId(task.vkGroupId) : null;
+
+    if (groupId) {
+      return {
+        ...base,
+        vkUrl: task?.vkUrl.trim() || buildVkClubUrl(groupId),
+        vkGroupId: String(groupId),
+        groupId,
+        id: groupId,
+        message: "Group already exists, skipped create_group",
+      };
+    }
+
+    return {
+      ...base,
+      skipped: true,
+      message: "vkGroupId is missing, manual creation required",
     };
   }
 
   if (job.action === "save_result") {
+    const tasks = readVkTasksFile();
+    const task = tasks.find((item) => item.id === job.taskId);
     const payload = job.payload ?? {};
-    const vkUrl =
-      typeof payload.vkUrl === "string" && payload.vkUrl.trim()
-        ? payload.vkUrl.trim()
-        : `https://vk.com/club_mock_${job.taskId}`;
+    const groupId = task ? normalizeVkGroupId(task.vkGroupId) : null;
     const vkGroupId =
-      typeof payload.vkGroupId === "string" && payload.vkGroupId.trim()
-        ? payload.vkGroupId.trim()
-        : `mock_${job.taskId}`;
+      groupId !== null
+        ? String(groupId)
+        : typeof payload.vkGroupId === "string" && payload.vkGroupId.trim()
+          ? payload.vkGroupId.trim()
+          : `mock_${job.taskId}`;
+    const vkUrl =
+      task?.vkUrl.trim() ||
+      (typeof payload.vkUrl === "string" && payload.vkUrl.trim() ? payload.vkUrl.trim() : "") ||
+      (groupId !== null ? buildVkClubUrl(groupId) : `https://vk.com/club_mock_${job.taskId}`);
     const taskStatus =
       payload.taskStatus === "posted" || payload.taskStatus === "created"
         ? payload.taskStatus
-        : "created";
+        : "posted";
 
     return {
       ...base,
@@ -52,11 +83,24 @@ export function buildMockResult(job: WorkerJob): Record<string, unknown> {
       taskStatus,
     };
   }
-
   return base;
 }
 
 export async function executeMockJob(job: WorkerJob): Promise<Record<string, unknown>> {
+  const tasks = readVkTasksFile();
+  const task = tasks.find((item) => item.id === job.taskId);
+  if (!task || task.status !== "ready_for_worker") {
+    throw new VkWorkerSkipError(`Задача ${job.taskId} не в статусе ready_for_worker`, {});
+  }
+
+  assertTaskReadyForWorkerAction(task, job.action);
+
   await sleep(randomMockDelayMs());
-  return buildMockResult(job);
+  const result = buildMockResult(job);
+
+  if (result.skipped === true) {
+    throw new VkWorkerSkipError(String(result.message ?? "Skipped"), result);
+  }
+
+  return result;
 }

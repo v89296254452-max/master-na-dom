@@ -1,6 +1,9 @@
 export const VK_AUTOMATION_ACTIONS = [
   "login_account",
   "create_group",
+  "need_manual_create",
+  "need_manual_check",
+  "setup_group",
   "fill_description",
   "upload_avatar",
   "upload_cover",
@@ -14,7 +17,10 @@ export type VkAutomationAction = (typeof VK_AUTOMATION_ACTIONS)[number];
 export const VK_AUTOMATION_ACTION_LABELS: Record<VkAutomationAction, string> = {
   login_account: "Вход в аккаунт",
   create_group: "Создание группы",
-  fill_description: "Заполнение описания",
+  need_manual_create: "Нужно создать группу вручную",
+  need_manual_check: "Не удалось распознать vkGroupId",
+  setup_group: "Настройка группы",
+  fill_description: "Заполнение описания (устарело)",
   upload_avatar: "Загрузка аватара",
   upload_cover: "Загрузка обложки",
   publish_pinned_post: "Публикация закреплённого поста",
@@ -71,7 +77,7 @@ export interface VkAutomationJobClaimResult {
 
 export interface VkAutomationJobCompleteInput {
   jobId: string;
-  status: "success" | "failed";
+  status: "success" | "failed" | "skipped";
   result?: Record<string, unknown>;
   error?: string;
   retry?: boolean;
@@ -86,6 +92,8 @@ export interface VkAutomationGenerateResult {
   created: number;
   skipped: number;
   removed?: number;
+  tasksUsed?: number;
+  taskIds?: string[];
   errors: string[];
   stats: VkAutomationQueueStats;
 }
@@ -94,3 +102,15 @@ export interface VkAutomationClearResult {
   removed: number;
   stats: VkAutomationQueueStats;
 }
+
+export interface VkAutomationReadinessStats {
+  readyForWorkerTasks: number;
+  readyForWorkerStrict: number;
+  readyForWorkerEligible: number;
+  brokenReadyWithoutGroupId: number;
+  manualSetupIncompleteStrict: number;
+  groupsCreated: number;
+  needManualCheck: number;
+}
+
+export const VK_AUTOMATION_MANUAL_GROUP_MODE = true;

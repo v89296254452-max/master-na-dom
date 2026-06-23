@@ -6,6 +6,8 @@ import { isAccountEligibleForAssignment } from "@/lib/vk-account-auth";
 import type { VkAccountGroup } from "@/lib/vk-types";
 import type { VkTask, VkTaskStatus } from "@/lib/vk-task-types";
 import { VK_TASK_STATUS_LABELS, VK_TASK_STATUSES } from "@/lib/vk-task-types";
+import type { VkTaskStatusSnapshot } from "@/lib/vk-task-status-types";
+import type { VkUrlBindBatchSummary } from "@/lib/vk-url-bind-batches-types";
 import type { VkTaskLogEntry } from "@/lib/vk-task-log-types";
 import { VK_TASK_LOG_ACTION_LABELS } from "@/lib/vk-task-log-types";
 import {
@@ -19,6 +21,15 @@ import {
   type VkTaskQualityCheck,
 } from "@/lib/vk-quality-check";
 import { VK_CONTENT_PACK_KEYS, VK_CONTENT_PACK_LABELS } from "@/lib/vk-content-pack";
+import { getImageAssetsIndicators } from "@/lib/vk-image-assets-types";
+import {
+  formatManualSetupScore,
+  getManualSetupWarning,
+  isManualSetupPrepared,
+  VK_GROUP_PREP_CHECKLIST_KEYS,
+  VK_MANUAL_SETUP_LABELS,
+  type VkTaskManualSetup,
+} from "@/lib/vk-manual-setup";
 import VkAccountsPanel from "./VkAccountsPanel";
 import VkTaskLogPanel from "./VkTaskLogPanel";
 import VkDashboardPanel from "./VkDashboardPanel";
@@ -29,10 +40,17 @@ import VkAntiDuplicatePanel from "./VkAntiDuplicatePanel";
 import VkBatchAssignPanel from "./VkBatchAssignPanel";
 import VkAutomationPanel from "./VkAutomationPanel";
 import VkApiDiagnosticsPanel from "./VkApiDiagnosticsPanel";
+import VkImagesPanel from "./VkImagesPanel";
+import VkGroupBindingPanel from "./VkGroupBindingPanel";
+import VkGroupPrepPanel from "./VkGroupPrepPanel";
+import VkServicePanel from "./VkServicePanel";
+import VkTaskImagesBlock from "./VkTaskImagesBlock";
 
-type ViewMode = "table" | "operator" | "accounts" | "log" | "dashboard" | "export" | "templates" | "visuals" | "antiduplicates" | "assignment" | "automation" | "diagnostics";
+type ViewMode = "table" | "operator" | "accounts" | "log" | "dashboard" | "export" | "templates" | "visuals" | "images" | "groupprep" | "groupbinding" | "service" | "antiduplicates" | "assignment" | "automation" | "diagnostics";
 type GroupFilter = "all" | VkAccountGroup;
-type StatusFilter = "all" | VkTaskStatus;
+type StatusFilter = "all" | VkTaskStatus | "vk_url_no_group_id";
+type HasVkGroupIdFilter = "all" | "yes" | "no";
+type StrictReadyFilter = "all" | "strict_ready";
 
 type TaskDraft = {
   vkUrl: string;
@@ -55,7 +73,9 @@ const GROUP_BADGE: Record<VkAccountGroup, string> = {
 const STATUS_BADGE: Record<VkTaskStatus, string> = {
   new: "bg-gray-100 text-navy-muted",
   in_progress: "bg-blue-100 text-blue-800",
+  need_vk_url: "bg-amber-100 text-amber-900",
   created: "bg-emerald-100 text-emerald-800",
+  ready_for_worker: "bg-teal-100 text-teal-900",
   filled: "bg-teal-100 text-teal-800",
   posted: "bg-green-100 text-green-800",
   error: "bg-red-100 text-red-800",
@@ -76,6 +96,23 @@ function taskToDraft(task: VkTask): TaskDraft {
   };
 }
 
+type BulkImportMode = "by_id" | "auto_bind";
+
+function isVkUrlWithoutGroupId(task: Pick<VkTask, "vkUrl" | "vkGroupId">): boolean {
+  return task.vkUrl.trim().length > 0 && !task.vkGroupId.trim();
+}
+
+type AutoBindResultSummary = {
+  linksTotal: number;
+  tasksUpdated: number;
+  bound: Array<{ taskId: string; vkUrl: string; vkGroupId: string }>;
+  notAssigned: string[];
+  notRecognized: Array<{ vkUrl: string; error: string }>;
+  errors: string[];
+  batchId?: string;
+  updatedTaskIds?: string[];
+};
+
 type BulkImportUpdate = {
   id: string;
   vkUrl?: string;
@@ -84,8 +121,29 @@ type BulkImportUpdate = {
   status?: VkTaskStatus;
 };
 
-function parseBulkImportText(text: string): { updates: BulkImportUpdate[]; errors: string[] } {
+function looksLikeVkUrl(value: string): boolean {
+  const lower = value.toLowerCase();
+  return (
+    lower.includes("vk.com") ||
+    lower.startsWith("club") ||
+    lower.startsWith("public") ||
+    lower.startsWith("event") ||
+    lower.startsWith("@")
+  );
+}
+
+function parseBulkImportText(
+  text: string,
+  mode: "by_id" | "auto_bind" = "by_id"
+): {
+  updates: BulkImportUpdate[];
+  unparsedUrls: string[];
+  autoBindUrls: string[];
+  errors: string[];
+} {
   const updates: BulkImportUpdate[] = [];
+  const unparsedUrls: string[] = [];
+  const autoBindUrls: string[] = [];
   const errors: string[] = [];
 
   const lines = text
@@ -93,9 +151,26 @@ function parseBulkImportText(text: string): { updates: BulkImportUpdate[]; error
     .map((line) => line.trim())
     .filter((line) => line && !line.startsWith("#"));
 
+  if (mode === "auto_bind") {
+    lines.forEach((line, index) => {
+      if (!looksLikeVkUrl(line)) {
+        errors.push(`Строка ${index + 1}: ожидается VK-ссылка`);
+        return;
+      }
+      autoBindUrls.push(line);
+    });
+    return { updates, unparsedUrls, autoBindUrls, errors };
+  }
+
   lines.forEach((line, index) => {
     const parts = line.split("|").map((part) => part.trim());
     const lineNo = index + 1;
+
+    if (!line.includes("|") && looksLikeVkUrl(line)) {
+      errors.push(`Строка ${lineNo}: только vkUrl — переключитесь на режим «Автопривязка ссылок»`);
+      return;
+    }
+
     const id = parts[0] ?? "";
 
     if (!id) {
@@ -105,16 +180,37 @@ function parseBulkImportText(text: string): { updates: BulkImportUpdate[]; error
 
     const update: BulkImportUpdate = { id };
 
-    if (parts[1]) update.vkUrl = parts[1];
-    if (parts[2]) update.vkGroupId = parts[2];
-    if (parts[3]) update.assignedAccount = parts[3];
-
-    if (parts[4]) {
-      if (!VK_TASK_STATUSES.includes(parts[4] as VkTaskStatus)) {
-        errors.push(`Строка ${lineNo} (${id}): некорректный status "${parts[4]}"`);
-        return;
+    if (parts.length >= 5) {
+      if (parts[1]) update.vkUrl = parts[1];
+      if (parts[2]) update.vkGroupId = parts[2];
+      if (parts[3]) update.assignedAccount = parts[3];
+      if (parts[4]) {
+        if (!VK_TASK_STATUSES.includes(parts[4] as VkTaskStatus)) {
+          errors.push(`Строка ${lineNo} (${id}): некорректный status "${parts[4]}"`);
+          return;
+        }
+        update.status = parts[4] as VkTaskStatus;
       }
-      update.status = parts[4] as VkTaskStatus;
+    } else if (parts.length === 4) {
+      const maybeStatus = parts[3];
+      if (maybeStatus && VK_TASK_STATUSES.includes(maybeStatus as VkTaskStatus)) {
+        if (parts[1]) update.vkUrl = parts[1];
+        if (parts[2]) update.assignedAccount = parts[2];
+        update.status = maybeStatus as VkTaskStatus;
+      } else if (looksLikeVkUrl(parts[1] ?? "")) {
+        if (parts[1]) update.vkUrl = parts[1];
+        if (parts[2]) update.vkGroupId = parts[2];
+        if (parts[3]) update.assignedAccount = parts[3];
+      } else {
+        if (parts[1]) update.vkUrl = parts[1];
+        if (parts[2]) update.assignedAccount = parts[2];
+        if (parts[3]) update.status = parts[3] as VkTaskStatus;
+      }
+    } else if (parts.length === 3) {
+      if (parts[1]) update.vkUrl = parts[1];
+      if (parts[2]) update.assignedAccount = parts[2];
+    } else {
+      if (parts[1]) update.vkUrl = parts[1];
     }
 
     if (!update.vkUrl && !update.vkGroupId && !update.assignedAccount && !update.status) {
@@ -125,7 +221,7 @@ function parseBulkImportText(text: string): { updates: BulkImportUpdate[]; error
     updates.push(update);
   });
 
-  return { updates, errors };
+  return { updates, unparsedUrls, autoBindUrls, errors };
 }
 
 function StatusBadge({ status }: { status: VkTaskStatus }) {
@@ -193,6 +289,10 @@ function ModeSwitcher({
           { value: "export" as const, label: "Экспорт" },
           { value: "templates" as const, label: "Шаблоны" },
           { value: "visuals" as const, label: "Визуалы" },
+          { value: "images" as const, label: "Изображения" },
+          { value: "groupprep" as const, label: "Подготовка группы" },
+          { value: "groupbinding" as const, label: "Привязка групп" },
+          { value: "service" as const, label: "Настройки / Сервис" },
           { value: "antiduplicates" as const, label: "Антидубли" },
           { value: "assignment" as const, label: "Распределение" },
           { value: "automation" as const, label: "Автоматизация" },
@@ -258,26 +358,77 @@ export default function VkTasksTable() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
+  const [resolveFeedback, setResolveFeedback] = useState<
+    Record<string, { type: "success" | "error"; message: string }>
+  >({});
   const [taking, setTaking] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("table");
+  const [imagesFocusTaskId, setImagesFocusTaskId] = useState("");
   const [query, setQuery] = useState("");
   const [groupFilter, setGroupFilter] = useState<GroupFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, TaskDraft>>({});
   const [bulkText, setBulkText] = useState("");
+  const [bulkImportMode, setBulkImportMode] = useState<BulkImportMode>("by_id");
+  const [bulkAutoBindAccountId, setBulkAutoBindAccountId] = useState("");
   const [bulkImporting, setBulkImporting] = useState(false);
-  const [bulkResult, setBulkResult] = useState<{ updated: number; notFound: string[] } | null>(null);
+  const [bulkResult, setBulkResult] = useState<{
+    updated: number;
+    notFound: string[];
+    resolveWarnings?: string[];
+    unparsedAdded?: number;
+    autoBind?: AutoBindResultSummary;
+  } | null>(null);
+  const [unparsedUrls, setUnparsedUrls] = useState<Array<{ id: string; vkUrl: string; addedAt: string }>>(
+    []
+  );
+  const [unparsedLoading, setUnparsedLoading] = useState(false);
+  const [bindText, setBindText] = useState("");
+  const [bindAccountId, setBindAccountId] = useState("");
+  const [binding, setBinding] = useState(false);
+  const [bindResult, setBindResult] = useState<{
+    bound: number;
+    skipped: number;
+    errors: string[];
+    batchId?: string;
+    updatedTaskIds?: string[];
+  } | null>(null);
+  const [lastBindBatch, setLastBindBatch] = useState<VkUrlBindBatchSummary | null>(null);
+  const [bindBatches, setBindBatches] = useState<VkUrlBindBatchSummary[]>([]);
+  const [bindBatchFilter, setBindBatchFilter] = useState<string>("all");
+  const [queueFromBatchBusy, setQueueFromBatchBusy] = useState(false);
   const [accounts, setAccounts] = useState<VkAccountWithStats[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState("");
   const [accountFilter, setAccountFilter] = useState<string>("all");
+  const [hasVkGroupIdFilter, setHasVkGroupIdFilter] = useState<HasVkGroupIdFilter>("all");
+  const [strictReadyFilter, setStrictReadyFilter] = useState<StrictReadyFilter>("all");
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(() => new Set());
+  const [queueForSelectedBusy, setQueueForSelectedBusy] = useState(false);
   const [taskLogEntries, setTaskLogEntries] = useState<VkTaskLogEntry[]>([]);
   const [taskLogLoading, setTaskLogLoading] = useState(false);
   const [allLogEntries, setAllLogEntries] = useState<VkTaskLogEntry[]>([]);
   const [allLogLoading, setAllLogLoading] = useState(false);
+  const [taskStatusSnapshot, setTaskStatusSnapshot] = useState<VkTaskStatusSnapshot | null>(null);
 
   const [regeneratingContentId, setRegeneratingContentId] = useState<string | null>(null);
   const [regeneratingVisualsId, setRegeneratingVisualsId] = useState<string | null>(null);
+
+  const loadUnparsedUrls = useCallback(async () => {
+    setUnparsedLoading(true);
+    try {
+      const res = await fetch("/api/vk-unparsed-urls");
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setUnparsedUrls(data.items ?? []);
+      }
+    } catch {
+      setUnparsedUrls([]);
+    } finally {
+      setUnparsedLoading(false);
+    }
+  }, []);
 
   const loadAllTaskLog = useCallback(async () => {
     setAllLogLoading(true);
@@ -328,21 +479,41 @@ export default function VkTasksTable() {
     }
   }, []);
 
+  const loadBindBatches = useCallback(async () => {
+    try {
+      const res = await fetch("/api/vk-url-bind-batches");
+      const data = await res.json();
+      if (res.ok && data.success && Array.isArray(data.batches)) {
+        setBindBatches(data.batches as VkUrlBindBatchSummary[]);
+      }
+    } catch {
+      setBindBatches([]);
+    }
+  }, []);
+
   const loadTasks = useCallback(async () => {
     setLoading(true);
     setError(null);
 
     try {
-      const res = await fetch("/api/vk-tasks");
-      const data = await res.json();
+      const [tasksRes, statusRes] = await Promise.all([
+        fetch("/api/vk-tasks"),
+        fetch("/api/vk-task-status"),
+      ]);
+      const data = await tasksRes.json();
+      const statusData = await statusRes.json();
 
-      if (!res.ok || !data.success) {
+      if (!tasksRes.ok || !data.success) {
         throw new Error(data.error || "Не удалось загрузить задачи");
       }
 
       const nextTasks = data.tasks as VkTask[];
       setTasks(nextTasks);
       setDrafts(Object.fromEntries(nextTasks.map((task) => [task.id, taskToDraft(task)])));
+
+      if (statusRes.ok && statusData.success && statusData.status) {
+        setTaskStatusSnapshot(statusData.status as VkTaskStatusSnapshot);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка загрузки");
     } finally {
@@ -353,7 +524,9 @@ export default function VkTasksTable() {
   useEffect(() => {
     loadTasks();
     loadAccounts();
-  }, [loadTasks, loadAccounts]);
+    loadUnparsedUrls();
+    loadBindBatches();
+  }, [loadTasks, loadAccounts, loadUnparsedUrls, loadBindBatches]);
 
   useEffect(() => {
     if (viewMode === "export") {
@@ -395,10 +568,38 @@ export default function VkTasksTable() {
   const inProgressTasks = useMemo(() => {
     if (!selectedAccountId) return [];
 
-    return tasks.filter(
-      (task) => task.status === "in_progress" && task.assignedAccount === selectedAccountId
-    );
+    return tasks
+      .filter(
+        (task) =>
+          (task.status === "in_progress" || task.status === "need_vk_url") &&
+          task.assignedAccount === selectedAccountId
+      )
+      .sort((a, b) => {
+        if (a.status === "need_vk_url" && b.status !== "need_vk_url") return -1;
+        if (b.status === "need_vk_url" && a.status !== "need_vk_url") return 1;
+        return (a.assignedAt || a.updatedAt).localeCompare(b.assignedAt || b.updatedAt);
+      });
   }, [tasks, selectedAccountId]);
+
+  const needVkUrlTasks = useMemo(() => {
+    return tasks.filter((task) => task.status === "need_vk_url");
+  }, [tasks]);
+
+  const needVkUrlTasksForAccount = useMemo(() => {
+    if (!bindAccountId) return [];
+    return needVkUrlTasks.filter((task) => task.assignedAccount === bindAccountId);
+  }, [needVkUrlTasks, bindAccountId]);
+
+  const autoBindCandidatesForAccount = useMemo(() => {
+    if (!bulkAutoBindAccountId) return [];
+    return tasks.filter(
+      (task) =>
+        (task.status === "in_progress" || task.status === "created") &&
+        task.assignedAccount === bulkAutoBindAccountId &&
+        !task.vkUrl.trim() &&
+        !task.vkGroupId.trim()
+    );
+  }, [tasks, bulkAutoBindAccountId]);
 
   const currentOperatorTask = inProgressTasks[0] ?? null;
 
@@ -425,6 +626,7 @@ export default function VkTasksTable() {
     return {
       total: assigned.length,
       in_progress: assigned.filter((task) => task.status === "in_progress").length,
+      need_vk_url: assigned.filter((task) => task.status === "need_vk_url").length,
       created: assigned.filter((task) => task.status === "created").length,
       filled: assigned.filter((task) => task.status === "filled").length,
       posted: assigned.filter((task) => task.status === "posted").length,
@@ -441,13 +643,53 @@ export default function VkTasksTable() {
     return Array.from(ids).sort();
   }, [tasks, activeAccounts]);
 
+  const vkUrlNoGroupCount = taskStatusSnapshot?.vkUrlNoGroupId ?? 0;
+  const vkUrlNoGroupIdSet = useMemo(
+    () => new Set(taskStatusSnapshot?.vkUrlNoGroupIdTaskIds ?? []),
+    [taskStatusSnapshot]
+  );
+  const strictReadyTaskIdSet = useMemo(
+    () => new Set(taskStatusSnapshot?.strictReadyTaskIds ?? []),
+    [taskStatusSnapshot]
+  );
+  const strictReadyCount = taskStatusSnapshot?.readyForWorkerStrict ?? 0;
+
+  const bindBatchFilterOptions = useMemo(() => {
+    const ids = new Set<string>();
+    bindBatches.forEach((batch) => ids.add(batch.batchId));
+    tasks.forEach((task) => {
+      if (task.lastBindBatchId.trim()) ids.add(task.lastBindBatchId.trim());
+    });
+    return Array.from(ids).sort((a, b) => b.localeCompare(a));
+  }, [bindBatches, tasks]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
 
     return tasks.filter((task) => {
       if (groupFilter !== "all" && task.accountGroup !== groupFilter) return false;
-      if (statusFilter !== "all" && task.status !== statusFilter) return false;
+      if (statusFilter === "vk_url_no_group_id") {
+        if (vkUrlNoGroupIdSet.size > 0) {
+          if (!vkUrlNoGroupIdSet.has(task.id)) return false;
+        } else if (!isVkUrlWithoutGroupId(task)) {
+          return false;
+        }
+      } else if (statusFilter !== "all" && task.status !== statusFilter) {
+        return false;
+      }
       if (accountFilter !== "all" && task.assignedAccount !== accountFilter) return false;
+      if (hasVkGroupIdFilter === "yes" && !task.vkGroupId.trim()) return false;
+      if (hasVkGroupIdFilter === "no" && task.vkGroupId.trim()) return false;
+      if (strictReadyFilter === "strict_ready") {
+        if (strictReadyTaskIdSet.size > 0) {
+          if (!strictReadyTaskIdSet.has(task.id)) return false;
+        } else if (task.status !== "ready_for_worker" || !task.vkGroupId.trim()) {
+          return false;
+        }
+      }
+      if (bindBatchFilter !== "all" && task.lastBindBatchId.trim() !== bindBatchFilter) {
+        return false;
+      }
       if (!q) return true;
 
       return (
@@ -455,10 +697,169 @@ export default function VkTasksTable() {
         task.service.toLowerCase().includes(q) ||
         task.vkName.toLowerCase().includes(q) ||
         task.slug.toLowerCase().includes(q) ||
-        task.assignedAccount.toLowerCase().includes(q)
+        task.assignedAccount.toLowerCase().includes(q) ||
+        task.id.toLowerCase().includes(q)
       );
     });
-  }, [tasks, query, groupFilter, statusFilter, accountFilter]);
+  }, [
+    tasks,
+    query,
+    groupFilter,
+    statusFilter,
+    accountFilter,
+    hasVkGroupIdFilter,
+    strictReadyFilter,
+    vkUrlNoGroupIdSet,
+    strictReadyTaskIdSet,
+    bindBatchFilter,
+  ]);
+
+  async function createQueueForBindBatch(batchId: string) {
+    if (
+      !confirm(
+        `Очистить очередь и создать pipeline только для привязки ${batchId}?`
+      )
+    ) {
+      return;
+    }
+
+    setQueueFromBatchBusy(true);
+    setError(null);
+    setMessage(null);
+
+    try {
+      const res = await fetch("/api/vk-automation-queue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "reset_and_generate_bind_batch", batchId }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Не удалось создать очередь по привязке");
+      }
+
+      const errors = Array.isArray(data.errors)
+        ? (data.errors as string[]).filter((item) => typeof item === "string" && item.trim())
+        : [];
+
+      if (errors.length > 0) {
+        setError(errors.join("; "));
+      } else {
+        setError(null);
+      }
+
+      setMessage(typeof data.message === "string" ? data.message : "Очередь создана по привязке");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка создания очереди");
+    } finally {
+      setQueueFromBatchBusy(false);
+    }
+  }
+
+  function renderBindBatchPanel(batch: Pick<VkUrlBindBatchSummary, "batchId" | "taskIds" | "tasksUpdated">) {
+    return (
+      <div className="mt-3 rounded-lg border border-teal-200 bg-teal-50 px-3 py-3 text-sm">
+        <p className="font-medium text-teal-900">
+          batchId: <code className="text-xs">{batch.batchId}</code>
+        </p>
+        <p className="mt-1 text-xs text-teal-800">
+          Обновлено задач: {batch.tasksUpdated ?? batch.taskIds.length}
+        </p>
+        {batch.taskIds.length > 0 ? (
+          <p className="mt-1 font-mono text-xs text-teal-900 break-all">{batch.taskIds.join(", ")}</p>
+        ) : null}
+        <button
+          type="button"
+          onClick={() => createQueueForBindBatch(batch.batchId)}
+          disabled={queueFromBatchBusy}
+          className="mt-2 rounded-lg bg-teal-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-800 disabled:opacity-50"
+        >
+          {queueFromBatchBusy ? "..." : "Создать очередь по этой привязке"}
+        </button>
+      </div>
+    );
+  }
+
+  const allFilteredSelected =
+    filtered.length > 0 && filtered.every((task) => selectedTaskIds.has(task.id));
+
+  function toggleTaskSelected(taskId: string) {
+    setSelectedTaskIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(taskId)) {
+        next.delete(taskId);
+      } else {
+        next.add(taskId);
+      }
+      return next;
+    });
+  }
+
+  function toggleSelectAllFiltered() {
+    setSelectedTaskIds((prev) => {
+      const next = new Set(prev);
+      if (allFilteredSelected) {
+        filtered.forEach((task) => next.delete(task.id));
+      } else {
+        filtered.forEach((task) => next.add(task.id));
+      }
+      return next;
+    });
+  }
+
+  async function handleGenerateQueueForSelected() {
+    const taskIds = Array.from(selectedTaskIds);
+    if (taskIds.length === 0) {
+      setError("Выберите хотя бы одну задачу");
+      return;
+    }
+
+    if (
+      !confirm(
+        `Очистить очередь и создать pipeline только для ${taskIds.length} выбранных задач?`
+      )
+    ) {
+      return;
+    }
+
+    setQueueForSelectedBusy(true);
+    setError(null);
+    setMessage(null);
+
+    try {
+      const res = await fetch("/api/vk-automation-queue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "generate_selected", taskIds }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Не удалось сформировать очередь");
+      }
+
+      if (data.stats) {
+        // queue stats not shown in tasks table — message only
+      }
+
+      const errors = Array.isArray(data.errors)
+        ? (data.errors as string[]).filter((item) => typeof item === "string" && item.trim())
+        : [];
+
+      if (errors.length > 0) {
+        setError(errors.join("; "));
+      } else {
+        setError(null);
+      }
+
+      setMessage(typeof data.message === "string" ? data.message : "Очередь сформирована");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка формирования очереди");
+    } finally {
+      setQueueForSelectedBusy(false);
+    }
+  }
 
   async function handleCopy(text: string, key: string) {
     await navigator.clipboard.writeText(text);
@@ -469,9 +870,12 @@ export default function VkTasksTable() {
   async function saveTask(
     id: string,
     patch: Partial<
-      Pick<VkTask, "vkUrl" | "assignedAccount" | "status" | "vkGroupId" | "qualityCheck" | "contentPack">
+      Pick<
+        VkTask,
+        "vkUrl" | "assignedAccount" | "status" | "vkGroupId" | "qualityCheck" | "manualSetup" | "contentPack"
+      >
     >,
-    options?: { reload?: boolean; successMessage?: string }
+    options?: { reload?: boolean; successMessage?: string; markManualCreated?: boolean }
   ) {
     setSavingId(id);
     setMessage(null);
@@ -481,7 +885,11 @@ export default function VkTasksTable() {
       const res = await fetch("/api/vk-tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, ...patch }),
+        body: JSON.stringify({
+          id,
+          ...patch,
+          ...(options?.markManualCreated ? { markManualCreated: true } : {}),
+        }),
       });
       const data = await res.json();
 
@@ -701,6 +1109,10 @@ export default function VkTasksTable() {
                   <div className="font-semibold text-navy">{selectedAccountStats.in_progress}</div>
                 </div>
                 <div className="rounded-lg bg-gray-card px-3 py-2">
+                  <div className="text-xs text-navy-muted">Нужна VK ссылка</div>
+                  <div className="font-semibold text-navy">{selectedAccountStats.need_vk_url ?? 0}</div>
+                </div>
+                <div className="rounded-lg bg-gray-card px-3 py-2">
                   <div className="text-xs text-navy-muted">Создано</div>
                   <div className="font-semibold text-navy">{selectedAccountStats.created}</div>
                 </div>
@@ -767,6 +1179,88 @@ export default function VkTasksTable() {
     );
   }
 
+  async function handleManualSetupChange(
+    task: VkTask,
+    key: keyof VkTaskManualSetup,
+    checked: boolean
+  ) {
+    await saveTask(
+      task.id,
+      {
+        manualSetup: {
+          ...task.manualSetup,
+          [key]: checked,
+        },
+      },
+      { successMessage: "Ручная настройка обновлена" }
+    );
+  }
+
+  function renderManualSetupBlock(task: VkTask, compact = false) {
+    const isSaving = savingId === task.id;
+    const complete = isManualSetupPrepared(task.manualSetup);
+    const warning = getManualSetupWarning(task.manualSetup);
+
+    if (compact) {
+      return (
+        <div className="space-y-1.5 text-xs text-navy min-w-[180px]">
+          <div className={complete ? "font-medium text-emerald-700" : "font-medium text-amber-800"}>
+            {formatManualSetupScore(task.manualSetup)}
+          </div>
+          {VK_GROUP_PREP_CHECKLIST_KEYS.map((key) => (
+            <label key={key} className="flex items-center gap-1.5">
+              <input
+                type="checkbox"
+                checked={task.manualSetup[key]}
+                disabled={isSaving}
+                onChange={(e) => handleManualSetupChange(task, key, e.target.checked)}
+                className="h-3.5 w-3.5 rounded border-gray-border"
+              />
+              <span>{VK_MANUAL_SETUP_LABELS[key]}</span>
+            </label>
+          ))}
+        </div>
+      );
+    }
+
+    return (
+      <section className="rounded-xl border border-gray-border bg-white p-4 sm:p-5">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold uppercase tracking-wide text-navy-muted">
+            Ручная настройка группы
+          </h3>
+          <span className="text-sm font-medium text-navy">{formatManualSetupScore(task.manualSetup)}</span>
+        </div>
+
+        <div className="grid gap-2 sm:grid-cols-2">
+          {VK_GROUP_PREP_CHECKLIST_KEYS.map((key) => (
+            <label
+              key={key}
+              className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-sm ${
+                task.manualSetup[key]
+                  ? "border-emerald-200 bg-emerald-50"
+                  : "border-amber-200 bg-amber-50/50"
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={task.manualSetup[key]}
+                disabled={isSaving}
+                onChange={(e) => handleManualSetupChange(task, key, e.target.checked)}
+                className="mt-0.5"
+              />
+              <span className="text-navy">{VK_MANUAL_SETUP_LABELS[key]}</span>
+            </label>
+          ))}
+        </div>
+
+        {warning ? (
+          <p className="mt-3 text-xs text-amber-800">{warning}. Worker (Posts Only) всё равно может быть запущен.</p>
+        ) : null}
+      </section>
+    );
+  }
+
   function renderQualityScore(task: VkTask) {
     const score = formatQualityCheckScore(task.qualityCheck);
     const complete = isQualityCheckComplete(task.qualityCheck);
@@ -779,6 +1273,18 @@ export default function VkTasksTable() {
       >
         {score}
       </span>
+    );
+  }
+
+  function renderImageAssetsIndicators(task: VkTask) {
+    const indicators = getImageAssetsIndicators(task.imageAssets);
+
+    return (
+      <div className="space-y-1 text-xs text-navy">
+        <div>avatar {indicators.avatar}</div>
+        <div>cover {indicators.cover}</div>
+        <div>posts {indicators.posts}</div>
+      </div>
     );
   }
 
@@ -949,7 +1455,10 @@ export default function VkTasksTable() {
     setError(null);
     setMessage(null);
 
-    const { updates, errors } = parseBulkImportText(bulkText);
+    const { updates, unparsedUrls: parsedUnparsed, autoBindUrls, errors } = parseBulkImportText(
+      bulkText,
+      bulkImportMode
+    );
 
     if (errors.length > 0) {
       setError(errors.join("\n"));
@@ -957,27 +1466,129 @@ export default function VkTasksTable() {
       return;
     }
 
-    if (updates.length === 0) {
+    if (bulkImportMode === "auto_bind") {
+      if (!bulkAutoBindAccountId.trim()) {
+        setError("Выберите аккаунт для автопривязки");
+        setBulkImporting(false);
+        return;
+      }
+
+      if (autoBindUrls.length === 0) {
+        setError("Вставьте VK-ссылки (по одной на строку)");
+        setBulkImporting(false);
+        return;
+      }
+
+      try {
+        const res = await fetch("/api/vk-tasks/bind-urls", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            accountId: bulkAutoBindAccountId.trim(),
+            urls: autoBindUrls,
+            mode: "auto",
+          }),
+        });
+        const data = await res.json();
+
+        if (!res.ok || !data.success) {
+          throw new Error(data.error || "Не удалось выполнить автопривязку");
+        }
+
+        const result = data.result as AutoBindResultSummary & { skipped?: string[]; batch?: VkUrlBindBatchSummary };
+
+        if (result.batch) {
+          setLastBindBatch(result.batch);
+        } else if (result.batchId) {
+          setLastBindBatch({
+            batchId: result.batchId,
+            createdAt: new Date().toISOString(),
+            accountId: bulkAutoBindAccountId.trim(),
+            mode: "auto",
+            linksTotal: result.linksTotal,
+            tasksUpdated: result.tasksUpdated,
+            taskIds: result.updatedTaskIds ?? result.bound.map((item) => item.taskId),
+          });
+        }
+
+        setBulkResult({
+          updated: 0,
+          notFound: [],
+          autoBind: {
+            linksTotal: result.linksTotal,
+            tasksUpdated: result.tasksUpdated,
+            bound: result.bound,
+            notAssigned: result.notAssigned ?? result.skipped ?? [],
+            notRecognized: result.notRecognized ?? [],
+            errors: result.errors ?? [],
+            batchId: result.batchId,
+            updatedTaskIds: result.updatedTaskIds ?? result.bound.map((item) => item.taskId),
+          },
+        });
+        setMessage(
+          data.message ||
+            `Автопривязка: ${result.tasksUpdated} из ${result.linksTotal} ссылок → задачи (ready_for_worker)`
+        );
+        await loadTasks();
+        await loadBindBatches();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Ошибка автопривязки");
+      } finally {
+        setBulkImporting(false);
+      }
+      return;
+    }
+
+    if (updates.length === 0 && parsedUnparsed.length === 0) {
       setError("Нет строк для импорта");
       setBulkImporting(false);
       return;
     }
 
     try {
-      const res = await fetch("/api/vk-tasks", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updates),
-      });
-      const data = await res.json();
+      let unparsedAdded = 0;
 
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || "Не удалось импортировать");
+      if (parsedUnparsed.length > 0) {
+        const unparsedRes = await fetch("/api/vk-unparsed-urls", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ urls: parsedUnparsed }),
+        });
+        const unparsedData = await unparsedRes.json();
+        if (!unparsedRes.ok || !unparsedData.success) {
+          throw new Error(unparsedData.error || "Не удалось добавить ссылки в очередь");
+        }
+        unparsedAdded = unparsedData.added ?? parsedUnparsed.length;
+        await loadUnparsedUrls();
       }
 
-      setBulkResult({ updated: data.updated, notFound: data.notFound ?? [] });
-      setMessage(`Импорт завершён: обновлено ${data.updated}`);
-      await loadTasks();
+      let updated = 0;
+      let notFound: string[] = [];
+      let resolveWarnings: string[] = [];
+
+      if (updates.length > 0) {
+        const res = await fetch("/api/vk-tasks", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(updates),
+        });
+        const data = await res.json();
+
+        if (!res.ok || !data.success) {
+          throw new Error(data.error || "Не удалось импортировать");
+        }
+
+        updated = data.updated;
+        notFound = data.notFound ?? [];
+        resolveWarnings = data.resolveWarnings ?? [];
+        await loadTasks();
+      }
+
+      setBulkResult({ updated, notFound, resolveWarnings, unparsedAdded });
+      const parts: string[] = [];
+      if (updated > 0) parts.push(`обновлено ${updated}`);
+      if (unparsedAdded > 0) parts.push(`в очередь ${unparsedAdded}`);
+      setMessage(parts.length > 0 ? `Импорт завершён: ${parts.join(", ")}` : "Импорт завершён");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка импорта");
     } finally {
@@ -985,62 +1596,579 @@ export default function VkTasksTable() {
     }
   }
 
+  async function handleBindUrls(options?: { useUnparsedQueue?: boolean; urls?: string[] }) {
+    const accountId = bindAccountId.trim();
+    if (!accountId) {
+      setError("Выберите аккаунт для привязки");
+      return;
+    }
+
+    const urls =
+      options?.urls ??
+      bindText
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line && !line.startsWith("#"));
+
+    if (urls.length === 0 && !options?.useUnparsedQueue) {
+      setError("Вставьте ссылки VK для привязки");
+      return;
+    }
+
+    setBinding(true);
+    setBindResult(null);
+    setError(null);
+    setMessage(null);
+
+    try {
+      const res = await fetch("/api/vk-tasks/bind-urls", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accountId,
+          urls,
+          useUnparsedQueue: options?.useUnparsedQueue === true,
+        }),
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Не удалось привязать ссылки");
+      }
+
+      const result = data.result as AutoBindResultSummary & { skipped?: string[]; batch?: VkUrlBindBatchSummary };
+
+      if (result.batch) {
+        setLastBindBatch(result.batch);
+      } else if (result.batchId) {
+        setLastBindBatch({
+          batchId: result.batchId,
+          createdAt: new Date().toISOString(),
+          accountId,
+          mode: "need_vk_url",
+          linksTotal: result.linksTotal,
+          tasksUpdated: result.tasksUpdated,
+          taskIds: result.updatedTaskIds ?? result.bound.map((item) => item.taskId),
+        });
+      }
+
+      setBindResult({
+        bound: result.tasksUpdated ?? result.bound.length,
+        skipped: (result.notAssigned ?? result.skipped ?? []).length,
+        errors: [
+          ...(result.errors ?? []),
+          ...(result.notRecognized ?? []).map(
+            (item: { vkUrl: string; error: string }) => `${item.vkUrl}: ${item.error}`
+          ),
+        ],
+        batchId: result.batchId,
+        updatedTaskIds: result.updatedTaskIds ?? result.bound.map((item) => item.taskId),
+      });
+      setMessage(data.message || `Привязано: ${result.tasksUpdated ?? result.bound.length}`);
+      await loadTasks();
+      await loadBindBatches();
+      await loadUnparsedUrls();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка привязки");
+    } finally {
+      setBinding(false);
+    }
+  }
+
   function renderBulkImport() {
     return (
-      <section className="rounded-xl border border-gray-border bg-white p-4 sm:p-5">
-        <h2 className="text-lg font-semibold text-navy">Массовое обновление</h2>
-        <p className="mt-1 text-sm text-navy-muted">
-          Формат строки:{" "}
-          <code className="rounded bg-gray-card px-1.5 py-0.5">
-            id | vkUrl | vkGroupId | assignedAccount | status
-          </code>
-        </p>
-        <p className="mt-1 text-xs text-navy-muted">
-          Пустые поля не обновляются. Статус: new, in_progress, created, filled, posted, error
-        </p>
+      <div className="space-y-5">
+        <section className="rounded-xl border border-gray-border bg-white p-4 sm:p-5">
+          <h2 className="text-lg font-semibold text-navy">Массовое обновление</h2>
 
-        <textarea
-          value={bulkText}
-          onChange={(e) => setBulkText(e.target.value)}
-          rows={6}
-          placeholder={`kp-abakan | https://vk.com/club123 | 123456 | account-1 | created\nkp-arkhangelsk | https://vk.com/club456 | | account-2 | filled`}
-          className="mt-4 w-full rounded-xl border border-gray-border px-4 py-3 font-mono text-sm outline-none focus:border-orange focus:ring-2 focus:ring-orange/20"
-        />
-
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            onClick={handleBulkImport}
-            disabled={bulkImporting}
-            className="rounded-lg bg-navy px-4 py-2 text-sm font-medium text-white hover:bg-navy-light disabled:opacity-50"
-          >
-            {bulkImporting ? "Импорт..." : "Импортировать"}
-          </button>
-        </div>
-
-        {bulkResult ? (
-          <div className="mt-4 rounded-lg border border-gray-border bg-gray-card px-4 py-3 text-sm">
-            <p className="font-medium text-navy">Обновлено: {bulkResult.updated}</p>
-            {bulkResult.notFound.length > 0 ? (
-              <p className="mt-2 text-red-700">
-                Не найдены id: {bulkResult.notFound.join(", ")}
-              </p>
-            ) : (
-              <p className="mt-2 text-navy-muted">Все id найдены</p>
-            )}
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setBulkImportMode("by_id")}
+              className={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${
+                bulkImportMode === "by_id"
+                  ? "bg-navy text-white"
+                  : "border border-gray-border bg-white text-navy hover:bg-gray-card"
+              }`}
+            >
+              По ID задачи
+            </button>
+            <button
+              type="button"
+              onClick={() => setBulkImportMode("auto_bind")}
+              className={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${
+                bulkImportMode === "auto_bind"
+                  ? "bg-emerald-600 text-white"
+                  : "border border-gray-border bg-white text-navy hover:bg-gray-card"
+              }`}
+            >
+              Автопривязка ссылок
+            </button>
           </div>
+
+          {bulkImportMode === "by_id" ? (
+            <>
+              <p className="mt-4 text-sm text-navy-muted">
+                Формат строки:{" "}
+                <code className="rounded bg-gray-card px-1.5 py-0.5">
+                  id | vkUrl | assignedAccount | status
+                </code>
+              </p>
+              <p className="mt-1 text-xs text-navy-muted">
+                Старый формат:{" "}
+                <code className="rounded bg-gray-card px-1.5 py-0.5">
+                  id | vkUrl | vkGroupId | assignedAccount | status
+                </code>
+              </p>
+              <p className="mt-1 text-xs text-navy-muted">
+                Статусы: new, in_progress, need_vk_url, created, ready_for_worker, filled, posted, error
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="mt-4 text-sm text-navy-muted">
+                Каждая строка — только VK-ссылка. Ссылки назначаются свободным задачам аккаунта (
+                <code>in_progress</code> / <code>created</code>, без vkUrl и vkGroupId).
+              </p>
+              <p className="mt-1 text-xs text-navy-muted">
+                После привязки: vkGroupId распознаётся автоматически, status → ready_for_worker (если задан аккаунт).
+              </p>
+              <label className="mt-4 flex flex-col gap-1 text-sm">
+                <span className="text-xs font-medium text-navy-muted">Аккаунт *</span>
+                <select
+                  value={bulkAutoBindAccountId}
+                  onChange={(e) => setBulkAutoBindAccountId(e.target.value)}
+                  className="max-w-xs rounded-lg border border-gray-border bg-white px-3 py-2 text-sm"
+                >
+                  <option value="">— выберите аккаунт —</option>
+                  {accountFilterOptions.map((id) => (
+                    <option key={id} value={id}>
+                      {id}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {bulkAutoBindAccountId ? (
+                <p className="mt-1 text-xs text-navy-muted">
+                  Свободных задач для привязки: {autoBindCandidatesForAccount.length}
+                </p>
+              ) : null}
+            </>
+          )}
+
+          <textarea
+            value={bulkText}
+            onChange={(e) => setBulkText(e.target.value)}
+            rows={6}
+            placeholder={
+              bulkImportMode === "auto_bind"
+                ? `https://vk.com/club239728284\nhttps://vk.com/club239728299\nhttps://vk.com/club239728309`
+                : `remont-televizorov-astrakhan | https://vk.com/club123 | 02 | created`
+            }
+            className="mt-4 w-full rounded-xl border border-gray-border px-4 py-3 font-mono text-sm outline-none focus:border-orange focus:ring-2 focus:ring-orange/20"
+          />
+
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={handleBulkImport}
+              disabled={bulkImporting || (bulkImportMode === "auto_bind" && !bulkAutoBindAccountId)}
+              className={`rounded-lg px-4 py-2 text-sm font-medium text-white disabled:opacity-50 ${
+                bulkImportMode === "auto_bind"
+                  ? "bg-emerald-600 hover:bg-emerald-700"
+                  : "bg-navy hover:bg-navy-light"
+              }`}
+            >
+              {bulkImporting
+                ? bulkImportMode === "auto_bind"
+                  ? "Привязка..."
+                  : "Импорт..."
+                : bulkImportMode === "auto_bind"
+                  ? "Автопривязать"
+                  : "Импортировать"}
+            </button>
+          </div>
+
+          {bulkResult?.autoBind ? (
+            <div className="mt-4 space-y-3 rounded-lg border border-emerald-200 bg-emerald-50/50 px-4 py-3 text-sm">
+              <p className="font-medium text-navy">
+                Ссылок вставлено: {bulkResult.autoBind.linksTotal} · Задач обновлено:{" "}
+                {bulkResult.autoBind.tasksUpdated}
+              </p>
+
+              {bulkResult.autoBind.bound.length > 0 ? (
+                <div>
+                  <p className="font-medium text-navy">Назначения:</p>
+                  <ul className="mt-1 max-h-48 space-y-1 overflow-y-auto font-mono text-xs text-navy">
+                    {bulkResult.autoBind.bound.map((item) => (
+                      <li key={`${item.taskId}-${item.vkUrl}`}>
+                        <span className="text-emerald-800">{item.taskId}</span>
+                        {" ← "}
+                        {item.vkUrl}
+                        {item.vkGroupId ? (
+                          <span className="text-navy-muted"> (vkGroupId: {item.vkGroupId})</span>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
+              {bulkResult.autoBind.notRecognized.length > 0 ? (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+                  <p className="font-medium text-red-800">Не распознаны:</p>
+                  <ul className="mt-1 list-inside list-disc text-red-700">
+                    {bulkResult.autoBind.notRecognized.map((item) => (
+                      <li key={item.vkUrl}>
+                        {item.vkUrl} — {item.error}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
+              {bulkResult.autoBind.notAssigned.length > 0 ? (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                  <p className="font-medium text-amber-900">Не назначены (нет свободных задач):</p>
+                  <ul className="mt-1 list-inside list-disc font-mono text-xs text-amber-800">
+                    {bulkResult.autoBind.notAssigned.map((url) => (
+                      <li key={url}>{url}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
+              {bulkResult.autoBind.errors.length > 0 ? (
+                <ul className="list-inside list-disc text-red-700">
+                  {bulkResult.autoBind.errors.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              ) : null}
+
+              {bulkResult.autoBind.batchId ? (
+                renderBindBatchPanel({
+                  batchId: bulkResult.autoBind.batchId,
+                  tasksUpdated: bulkResult.autoBind.tasksUpdated,
+                  taskIds:
+                    bulkResult.autoBind.updatedTaskIds ??
+                    bulkResult.autoBind.bound.map((item) => item.taskId),
+                })
+              ) : null}
+            </div>
+          ) : bulkResult ? (
+            <div className="mt-4 rounded-lg border border-gray-border bg-gray-card px-4 py-3 text-sm">
+              {bulkResult.updated > 0 ? (
+                <p className="font-medium text-navy">Обновлено задач: {bulkResult.updated}</p>
+              ) : null}
+              {(bulkResult.unparsedAdded ?? 0) > 0 ? (
+                <p className="font-medium text-navy">
+                  Добавлено в «Неразобранные группы»: {bulkResult.unparsedAdded}
+                </p>
+              ) : null}
+              {bulkResult.updated > 0 ? (
+                bulkResult.notFound.length > 0 ? (
+                  <p className="mt-2 text-red-700">
+                    Не найдены id: {bulkResult.notFound.join(", ")}
+                  </p>
+                ) : (
+                  <p className="mt-2 text-navy-muted">Все id найдены</p>
+                )
+              ) : null}
+              {bulkResult.resolveWarnings && bulkResult.resolveWarnings.length > 0 ? (
+                <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                  <p className="font-medium text-amber-900">Предупреждения распознавания vkGroupId:</p>
+                  <ul className="mt-1 list-inside list-disc text-amber-800">
+                    {bulkResult.resolveWarnings.map((warning) => (
+                      <li key={warning}>{warning}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </section>
+
+        <section className="rounded-xl border border-amber-200 bg-amber-50/40 p-4 sm:p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-navy">Неразобранные группы</h2>
+              <p className="mt-1 text-sm text-navy-muted">
+                Ссылки без привязки к задаче. Задач со статусом need_vk_url:{" "}
+                <strong>{needVkUrlTasks.length}</strong>
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={loadUnparsedUrls}
+              disabled={unparsedLoading}
+              className="rounded-lg border border-gray-border bg-white px-3 py-1.5 text-xs font-medium text-navy hover:bg-gray-card disabled:opacity-50"
+            >
+              {unparsedLoading ? "..." : "Обновить"}
+            </button>
+          </div>
+
+          {unparsedUrls.length === 0 ? (
+            <p className="mt-4 text-sm text-navy-muted">Очередь пуста</p>
+          ) : (
+            <ul className="mt-4 max-h-48 space-y-1 overflow-y-auto rounded-lg border border-amber-200 bg-white px-3 py-2 font-mono text-xs text-navy">
+              {unparsedUrls.map((item) => (
+                <li key={item.id}>{item.vkUrl}</li>
+              ))}
+            </ul>
+          )}
+
+          <div className="mt-4 flex flex-wrap items-end gap-3">
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="text-xs font-medium text-navy-muted">Аккаунт для привязки</span>
+              <select
+                value={bindAccountId}
+                onChange={(e) => setBindAccountId(e.target.value)}
+                className="min-w-[180px] rounded-lg border border-gray-border bg-white px-3 py-2 text-sm"
+              >
+                <option value="">— выберите —</option>
+                {accountFilterOptions.map((id) => (
+                  <option key={id} value={id}>
+                    {id}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              onClick={() => handleBindUrls({ useUnparsedQueue: true, urls: [] })}
+              disabled={binding || !bindAccountId || unparsedUrls.length === 0}
+              className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+            >
+              {binding ? "Привязка..." : "Привязать очередь к need_vk_url"}
+            </button>
+          </div>
+          {bindAccountId ? (
+            <p className="mt-2 text-xs text-navy-muted">
+              Свободных задач need_vk_url для {bindAccountId}: {needVkUrlTasksForAccount.length}
+            </p>
+          ) : null}
+        </section>
+
+        <section className="rounded-xl border border-emerald-200 bg-emerald-50/30 p-4 sm:p-5">
+          <h2 className="text-lg font-semibold text-navy">Массовая привязка ссылок</h2>
+          <p className="mt-1 text-sm text-navy-muted">
+            Вставьте список VK-ссылок — система назначит их следующим свободным задачам{" "}
+            <code>need_vk_url</code> выбранного аккаунта и распознает vkGroupId.
+          </p>
+
+          <textarea
+            value={bindText}
+            onChange={(e) => setBindText(e.target.value)}
+            rows={5}
+            placeholder={`https://vk.com/club123\nhttps://vk.com/club456\nhttps://vk.com/club789`}
+            className="mt-4 w-full rounded-xl border border-gray-border bg-white px-4 py-3 font-mono text-sm outline-none focus:border-orange focus:ring-2 focus:ring-orange/20"
+          />
+
+          <div className="mt-4 flex flex-wrap items-end gap-3">
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="text-xs font-medium text-navy-muted">Аккаунт</span>
+              <select
+                value={bindAccountId}
+                onChange={(e) => setBindAccountId(e.target.value)}
+                className="min-w-[180px] rounded-lg border border-gray-border bg-white px-3 py-2 text-sm"
+              >
+                <option value="">— выберите —</option>
+                {accountFilterOptions.map((id) => (
+                  <option key={id} value={id}>
+                    {id}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              onClick={() => handleBindUrls()}
+              disabled={binding || !bindAccountId}
+              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+            >
+              {binding ? "Привязка..." : "Привязать ссылки"}
+            </button>
+          </div>
+
+          {bindResult ? (
+            <div className="mt-4 rounded-lg border border-gray-border bg-white px-4 py-3 text-sm">
+              <p className="font-medium text-navy">Привязано: {bindResult.bound}</p>
+              {bindResult.skipped > 0 ? (
+                <p className="mt-1 text-amber-700">Пропущено (нет свободных задач): {bindResult.skipped}</p>
+              ) : null}
+              {bindResult.errors.length > 0 ? (
+                <ul className="mt-2 list-inside list-disc text-red-700">
+                  {bindResult.errors.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              ) : null}
+              {bindResult.batchId ? (
+                renderBindBatchPanel({
+                  batchId: bindResult.batchId,
+                  tasksUpdated: bindResult.bound,
+                  taskIds: bindResult.updatedTaskIds ?? [],
+                })
+              ) : null}
+            </div>
+          ) : null}
+        </section>
+
+        {needVkUrlTasks.length > 0 ? (
+          <section className="rounded-xl border border-gray-border bg-white p-4 sm:p-5">
+            <h2 className="text-lg font-semibold text-navy">
+              Задачи need_vk_url ({needVkUrlTasks.length})
+            </h2>
+            <div className="mt-3 max-h-56 overflow-y-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="border-b border-gray-border text-navy-muted">
+                    <th className="py-2 pr-3">id</th>
+                    <th className="py-2 pr-3">город</th>
+                    <th className="py-2 pr-3">аккаунт</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {needVkUrlTasks.slice(0, 50).map((task) => (
+                    <tr key={task.id} className="border-b border-gray-border/60">
+                      <td className="py-2 pr-3 font-mono">{task.id}</td>
+                      <td className="py-2 pr-3">{task.city}</td>
+                      <td className="py-2 pr-3">{task.assignedAccount || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {needVkUrlTasks.length > 50 ? (
+                <p className="mt-2 text-xs text-navy-muted">Показаны первые 50 из {needVkUrlTasks.length}</p>
+              ) : null}
+            </div>
+          </section>
         ) : null}
-      </section>
+      </div>
     );
   }
 
   async function handleMarkCreated(task: VkTask) {
     const draft = getDraft(task);
-    await saveTask(task.id, {
-      vkUrl: draft.vkUrl.trim(),
-      assignedAccount: draft.assignedAccount.trim(),
-      status: "created",
-    });
+
+    await saveTask(
+      task.id,
+      {
+        vkUrl: draft.vkUrl.trim(),
+        vkGroupId: draft.vkGroupId.trim(),
+        assignedAccount: draft.assignedAccount.trim(),
+      },
+      {
+        reload: true,
+        markManualCreated: true,
+        successMessage: "Группа отмечена — статус ready_for_worker или created",
+      }
+    );
+  }
+
+  async function handleManualGroupCreated(task: VkTask) {
+    const draft = getDraft(task);
+
+    if (!draft.vkGroupId.trim()) {
+      setError("Заполните vkGroupId перед отметкой «Группа создана вручную»");
+      return;
+    }
+
+    await saveTask(
+      task.id,
+      {
+        vkUrl: draft.vkUrl.trim(),
+        vkGroupId: draft.vkGroupId.trim(),
+        assignedAccount: draft.assignedAccount.trim(),
+      },
+      {
+        reload: true,
+        markManualCreated: true,
+        successMessage: "Группа отмечена как созданная вручную (ready_for_worker)",
+      }
+    );
+  }
+
+  async function handleResolveVkUrl(task: VkTask, options?: { auto?: boolean }) {
+    const draft = getDraft(task);
+    const vkUrl = draft.vkUrl.trim();
+
+    if (!vkUrl) {
+      if (!options?.auto) {
+        setError("Укажите vkUrl для распознавания");
+      }
+      return;
+    }
+
+    const accountId = draft.assignedAccount.trim() || selectedAccountId;
+    if (!accountId) {
+      const message = "Выберите assignedAccount для распознавания screen_name";
+      setResolveFeedback((prev) => ({ ...prev, [task.id]: { type: "error", message } }));
+      if (!options?.auto) setError(message);
+      return;
+    }
+
+    setResolvingId(task.id);
+    if (!options?.auto) {
+      setError(null);
+      setMessage(null);
+    }
+
+    try {
+      const res = await fetch("/api/vk-tasks/resolve-vk-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          taskId: task.id,
+          vkUrl,
+          accountId,
+        }),
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        const message = data.error || data.resolve?.error || "Не удалось распознать VK URL";
+        setResolveFeedback((prev) => ({ ...prev, [task.id]: { type: "error", message } }));
+        if (!options?.auto) setError(message);
+        return;
+      }
+
+      const updatedTask = data.task as VkTask;
+      setTasks((prev) => prev.map((item) => (item.id === task.id ? updatedTask : item)));
+      setDrafts((prev) => ({ ...prev, [task.id]: taskToDraft(updatedTask) }));
+      setResolveFeedback((prev) => ({
+        ...prev,
+        [task.id]: {
+          type: "success",
+          message: `vkGroupId: ${updatedTask.vkGroupId}`,
+        },
+      }));
+      if (!options?.auto) {
+        setMessage(data.message || `vkGroupId распознан: ${updatedTask.vkGroupId}`);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Ошибка распознавания VK URL";
+      setResolveFeedback((prev) => ({ ...prev, [task.id]: { type: "error", message } }));
+      if (!options?.auto) setError(message);
+    } finally {
+      setResolvingId(null);
+    }
+  }
+
+  function renderResolveFeedback(taskId: string) {
+    const feedback = resolveFeedback[taskId];
+    if (!feedback) return null;
+
+    return (
+      <p
+        className={`mt-1 text-xs ${
+          feedback.type === "success" ? "text-emerald-700" : "text-red-700"
+        }`}
+      >
+        {feedback.message}
+      </p>
+    );
   }
 
   function renderRowActions(task: VkTask) {
@@ -1093,26 +2221,38 @@ export default function VkTasksTable() {
       <div className="space-y-3">
         <div>
           <label className="mb-1 block text-xs font-medium text-navy-muted">VK URL</label>
-          <input
-            type="url"
-            value={draft.vkUrl}
-            onChange={(e) => updateDraft(task.id, "vkUrl", e.target.value)}
-            onBlur={() => {
-              if (
-                draft.vkUrl !== task.vkUrl ||
-                draft.assignedAccount !== task.assignedAccount ||
-                draft.vkGroupId !== task.vkGroupId
-              ) {
-                saveTask(task.id, {
-                  vkUrl: draft.vkUrl.trim(),
-                  assignedAccount: draft.assignedAccount.trim(),
-                  vkGroupId: draft.vkGroupId.trim(),
-                });
-              }
-            }}
-            placeholder="https://vk.com/..."
-            className="w-full rounded-lg border border-gray-border px-3 py-2 text-sm outline-none focus:border-orange focus:ring-2 focus:ring-orange/20"
-          />
+          <div className="flex gap-2">
+            <input
+              type="url"
+              value={draft.vkUrl}
+              onChange={(e) => updateDraft(task.id, "vkUrl", e.target.value)}
+              onBlur={() => {
+                const nextDraft = getDraft(task);
+                if (
+                  nextDraft.vkUrl !== task.vkUrl ||
+                  nextDraft.assignedAccount !== task.assignedAccount ||
+                  nextDraft.vkGroupId !== task.vkGroupId
+                ) {
+                  saveTask(task.id, {
+                    vkUrl: nextDraft.vkUrl.trim(),
+                    assignedAccount: nextDraft.assignedAccount.trim(),
+                    vkGroupId: nextDraft.vkGroupId.trim(),
+                  });
+                }
+                if (nextDraft.vkUrl.trim() && nextDraft.vkUrl.trim() !== task.vkUrl) {
+                  void handleResolveVkUrl(task, { auto: true });
+                }
+              }}
+              placeholder="https://vk.com/..."
+              className="min-w-0 flex-1 rounded-lg border border-gray-border px-3 py-2 text-sm outline-none focus:border-orange focus:ring-2 focus:ring-orange/20"
+            />
+            <ActionButton
+              label={resolvingId === task.id ? "..." : "Распознать"}
+              disabled={isSaving || resolvingId === task.id}
+              onClick={() => handleResolveVkUrl(task)}
+            />
+          </div>
+          {renderResolveFeedback(task.id)}
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-navy-muted">Аккаунт</label>
@@ -1137,12 +2277,43 @@ export default function VkTasksTable() {
             className="w-full rounded-lg border border-gray-border px-3 py-2 text-sm outline-none focus:border-orange focus:ring-2 focus:ring-orange/20"
           />
         </div>
-        <ActionButton
-          label="Создано"
-          variant="success"
-          disabled={isSaving}
-          onClick={() => handleMarkCreated(task)}
-        />
+        <div>
+          <label className="mb-1 block text-xs font-medium text-navy-muted">VK Group ID</label>
+          <input
+            type="text"
+            value={draft.vkGroupId}
+            onChange={(e) => updateDraft(task.id, "vkGroupId", e.target.value)}
+            onBlur={() => {
+              if (
+                draft.vkUrl !== task.vkUrl ||
+                draft.assignedAccount !== task.assignedAccount ||
+                draft.vkGroupId !== task.vkGroupId
+              ) {
+                saveTask(task.id, {
+                  vkUrl: draft.vkUrl.trim(),
+                  assignedAccount: draft.assignedAccount.trim(),
+                  vkGroupId: draft.vkGroupId.trim(),
+                });
+              }
+            }}
+            placeholder="123456789"
+            className="w-full rounded-lg border border-gray-border px-3 py-2 text-sm outline-none focus:border-orange focus:ring-2 focus:ring-orange/20"
+          />
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <ActionButton
+            label="Группа создана вручную"
+            variant="primary"
+            disabled={isSaving}
+            onClick={() => handleManualGroupCreated(task)}
+          />
+          <ActionButton
+            label="Создано"
+            variant="success"
+            disabled={isSaving}
+            onClick={() => handleMarkCreated(task)}
+          />
+        </div>
       </div>
     );
   }
@@ -1286,15 +2457,29 @@ export default function VkTasksTable() {
             Данные сообщества
           </h3>
           <div className="grid gap-4 sm:grid-cols-3">
-            <div>
+            <div className="sm:col-span-3">
               <label className="mb-1 block text-xs font-medium text-navy-muted">VK URL</label>
-              <input
-                type="url"
-                value={draft.vkUrl}
-                onChange={(e) => updateDraft(task.id, "vkUrl", e.target.value)}
-                placeholder="https://vk.com/..."
-                className="w-full rounded-lg border border-gray-border px-3 py-2.5 text-sm outline-none focus:border-orange focus:ring-2 focus:ring-orange/20"
-              />
+              <div className="flex gap-2">
+                <input
+                  type="url"
+                  value={draft.vkUrl}
+                  onChange={(e) => updateDraft(task.id, "vkUrl", e.target.value)}
+                  onBlur={() => {
+                    const nextDraft = getDraft(task);
+                    if (nextDraft.vkUrl.trim() && nextDraft.vkUrl.trim() !== task.vkUrl) {
+                      void handleResolveVkUrl(task, { auto: true });
+                    }
+                  }}
+                  placeholder="https://vk.com/..."
+                  className="min-w-0 flex-1 rounded-lg border border-gray-border px-3 py-2.5 text-sm outline-none focus:border-orange focus:ring-2 focus:ring-orange/20"
+                />
+                <ActionButton
+                  label={resolvingId === task.id ? "..." : "Распознать"}
+                  disabled={isSaving || resolvingId === task.id}
+                  onClick={() => handleResolveVkUrl(task)}
+                />
+              </div>
+              {renderResolveFeedback(task.id)}
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-navy-muted">VK Group ID</label>
@@ -1321,13 +2506,32 @@ export default function VkTasksTable() {
 
         {renderOperatorContentPack(task)}
 
+        {renderManualSetupBlock(task)}
+
         {renderOperatorQualityChecklist(task)}
+
+        <section className="rounded-xl border border-gray-border bg-white p-4 sm:p-5">
+          <VkTaskImagesBlock
+            task={task}
+            variant="operator"
+            onTaskUpdated={(updated) => {
+              setTasks((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+            }}
+          />
+        </section>
 
         <section className="rounded-xl border border-gray-border bg-gray-card p-4 sm:p-5">
           <h3 className="mb-4 text-sm font-semibold uppercase tracking-wide text-navy-muted">
             Статус задачи
           </h3>
           <div className="flex flex-wrap gap-3">
+            <ActionButton
+              label="Группа создана вручную"
+              variant="primary"
+              className="px-4 py-2.5 text-sm"
+              disabled={isSaving}
+              onClick={() => handleManualGroupCreated(task)}
+            />
             <ActionButton
               label="Создано"
               variant="success"
@@ -1388,6 +2592,13 @@ export default function VkTasksTable() {
   function renderTableMode() {
     return (
       <>
+        {lastBindBatch ? (
+          <div className="rounded-xl border border-teal-200 bg-teal-50/60 p-4">
+            <p className="text-sm font-semibold text-teal-900">Последняя массовая привязка</p>
+            {renderBindBatchPanel(lastBindBatch)}
+          </div>
+        ) : null}
+
         <div className="flex flex-col gap-3 rounded-xl border border-gray-border bg-gray-card p-4 lg:flex-row lg:items-end lg:justify-between">
           <div className="flex flex-wrap items-end gap-3">
             <div className="min-w-[200px]">{renderAccountSelector()}</div>
@@ -1400,7 +2611,8 @@ export default function VkTasksTable() {
               {taking ? "Выдача..." : "Взять 10 задач"}
             </button>
             <span className="self-center text-xs text-navy-muted">
-              Новых: {stats.statuses.new ?? 0} · В работе: {stats.statuses.in_progress ?? 0}
+              Новых: {stats.statuses.new ?? 0} · В работе: {stats.statuses.in_progress ?? 0} ·
+              need_vk_url: {stats.statuses.need_vk_url ?? 0}
             </span>
           </div>
           <div className="text-sm text-navy-muted">
@@ -1448,6 +2660,17 @@ export default function VkTasksTable() {
                 {VK_TASK_STATUS_LABELS[status]} ({stats.statuses[status] ?? 0})
               </button>
             ))}
+            <button
+              type="button"
+              onClick={() => setStatusFilter("vk_url_no_group_id")}
+              className={`rounded-full px-3 py-1.5 text-xs font-medium ${
+                statusFilter === "vk_url_no_group_id"
+                  ? "bg-orange text-white"
+                  : "bg-white text-navy border border-gray-border"
+              }`}
+            >
+              Есть vkUrl, но нет vkGroupId ({vkUrlNoGroupCount})
+            </button>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -1464,6 +2687,73 @@ export default function VkTasksTable() {
                 </option>
               ))}
             </select>
+            <span className="text-xs font-medium text-navy-muted">vkGroupId:</span>
+            {(
+              [
+                { value: "all" as const, label: "Все" },
+                { value: "yes" as const, label: "Есть" },
+                { value: "no" as const, label: "Нет" },
+              ] as const
+            ).map((item) => (
+              <button
+                key={item.value}
+                type="button"
+                onClick={() => setHasVkGroupIdFilter(item.value)}
+                className={`rounded-full px-3 py-1.5 text-xs font-medium ${
+                  hasVkGroupIdFilter === item.value
+                    ? "bg-teal-700 text-white"
+                    : "bg-white text-navy border border-gray-border"
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => setStrictReadyFilter(strictReadyFilter === "strict_ready" ? "all" : "strict_ready")}
+              className={`rounded-full px-3 py-1.5 text-xs font-medium ${
+                strictReadyFilter === "strict_ready"
+                  ? "bg-teal-700 text-white"
+                  : "bg-white text-navy border border-gray-border"
+              }`}
+            >
+              ready_for_worker_strict ({strictReadyCount})
+            </button>
+            <span className="text-xs font-medium text-navy-muted">lastBindBatchId:</span>
+            <select
+              value={bindBatchFilter}
+              onChange={(e) => setBindBatchFilter(e.target.value)}
+              className="rounded-lg border border-gray-border bg-white px-3 py-1.5 text-xs"
+            >
+              <option value="all">Все привязки</option>
+              {bindBatchFilterOptions.map((batchId) => (
+                <option key={batchId} value={batchId}>
+                  {batchId}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-gray-border bg-gray-card p-3">
+            <span className="text-xs text-navy-muted">
+              Выбрано: <strong className="text-navy">{selectedTaskIds.size}</strong>
+            </span>
+            <button
+              type="button"
+              onClick={toggleSelectAllFiltered}
+              disabled={filtered.length === 0}
+              className="rounded-lg border border-gray-border bg-white px-3 py-1.5 text-xs font-medium text-navy hover:bg-gray-card disabled:opacity-50"
+            >
+              {allFilteredSelected ? "Снять выбор с фильтра" : "Выбрать все на экране"}
+            </button>
+            <button
+              type="button"
+              onClick={handleGenerateQueueForSelected}
+              disabled={queueForSelectedBusy || selectedTaskIds.size === 0}
+              className="rounded-lg bg-orange px-4 py-1.5 text-xs font-semibold text-white hover:bg-orange-dark disabled:opacity-50"
+            >
+              {queueForSelectedBusy ? "..." : "Сформировать очередь только для выбранных"}
+            </button>
           </div>
         </div>
 
@@ -1485,6 +2775,15 @@ export default function VkTasksTable() {
               <table className="min-w-full text-left text-sm">
                 <thead className="bg-gray-card text-navy-muted">
                   <tr>
+                    <th className="px-3 py-3 font-medium">
+                      <input
+                        type="checkbox"
+                        checked={allFilteredSelected}
+                        onChange={toggleSelectAllFiltered}
+                        aria-label="Выбрать все задачи на экране"
+                        className="h-4 w-4 rounded border-gray-border"
+                      />
+                    </th>
                     <th className="px-3 py-3 font-medium">Группа</th>
                     <th className="px-3 py-3 font-medium">Город</th>
                     <th className="px-3 py-3 font-medium">Услуга</th>
@@ -1493,6 +2792,8 @@ export default function VkTasksTable() {
                     <th className="px-3 py-3 font-medium">Сайт</th>
                     <th className="px-3 py-3 font-medium">Статус</th>
                     <th className="px-3 py-3 font-medium">Качество</th>
+                    <th className="px-3 py-3 font-medium">Картинки</th>
+                    <th className="px-3 py-3 font-medium">Ручная настройка</th>
                     <th className="px-3 py-3 font-medium min-w-[220px]">VK / Аккаунт</th>
                     <th className="px-3 py-3 font-medium min-w-[280px]">Действия</th>
                   </tr>
@@ -1500,6 +2801,15 @@ export default function VkTasksTable() {
                 <tbody>
                   {filtered.map((task) => (
                     <tr key={task.id} className="border-t border-gray-border align-top hover:bg-gray-card/50">
+                      <td className="px-3 py-3">
+                        <input
+                          type="checkbox"
+                          checked={selectedTaskIds.has(task.id)}
+                          onChange={() => toggleTaskSelected(task.id)}
+                          aria-label={`Выбрать ${task.id}`}
+                          className="h-4 w-4 rounded border-gray-border"
+                        />
+                      </td>
                       <td className="px-3 py-3">
                         <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${GROUP_BADGE[task.accountGroup]}`}>
                           {GROUP_LABELS[task.accountGroup]}
@@ -1518,6 +2828,8 @@ export default function VkTasksTable() {
                         <StatusBadge status={task.status} />
                       </td>
                       <td className="px-3 py-3">{renderQualityScore(task)}</td>
+                      <td className="px-3 py-3">{renderImageAssetsIndicators(task)}</td>
+                      <td className="px-3 py-3">{renderManualSetupBlock(task, true)}</td>
                       <td className="px-3 py-3">{renderTaskFields(task)}</td>
                       <td className="px-3 py-3">{renderRowActions(task)}</td>
                     </tr>
@@ -1530,16 +2842,28 @@ export default function VkTasksTable() {
               {filtered.map((task) => (
                 <article key={task.id} className="rounded-xl border border-gray-border bg-white p-4 shadow-sm">
                   <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div>
+                    <div className="flex items-start gap-3">
+                      <input
+                        type="checkbox"
+                        checked={selectedTaskIds.has(task.id)}
+                        onChange={() => toggleTaskSelected(task.id)}
+                        aria-label={`Выбрать ${task.id}`}
+                        className="mt-1 h-4 w-4 rounded border-gray-border"
+                      />
+                      <div>
                       <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${GROUP_BADGE[task.accountGroup]}`}>
                         {GROUP_LABELS[task.accountGroup]}
                       </span>
                       <h2 className="mt-2 text-base font-semibold text-navy">{task.vkName}</h2>
+                      <p className="mt-0.5 font-mono text-xs text-navy-muted">{task.id}</p>
+                    </div>
                     </div>
                     <StatusBadge status={task.status} />
                   </div>
 
                   <div className="mt-3">{renderQualityScore(task)}</div>
+                  <div className="mt-3">{renderImageAssetsIndicators(task)}</div>
+                  <div className="mt-3">{renderManualSetupBlock(task, true)}</div>
 
                   <dl className="mt-4 space-y-2 text-sm">
                     <div className="flex gap-2">
@@ -1576,7 +2900,7 @@ export default function VkTasksTable() {
     await loadAccounts();
   }
 
-  if (loading && viewMode !== "accounts" && viewMode !== "log" && viewMode !== "dashboard" && viewMode !== "export" && viewMode !== "templates" && viewMode !== "visuals" && viewMode !== "antiduplicates" && viewMode !== "assignment" && viewMode !== "automation" && viewMode !== "diagnostics") {
+  if (loading && viewMode !== "accounts" && viewMode !== "log" && viewMode !== "dashboard" && viewMode !== "export" && viewMode !== "templates" && viewMode !== "visuals" && viewMode !== "images" && viewMode !== "groupprep" && viewMode !== "groupbinding" && viewMode !== "service" && viewMode !== "antiduplicates" && viewMode !== "assignment" && viewMode !== "automation" && viewMode !== "diagnostics") {
     return (
       <div className="rounded-xl border border-gray-border bg-gray-card px-6 py-12 text-center text-navy-muted">
         Загрузка задач...
@@ -1588,9 +2912,11 @@ export default function VkTasksTable() {
     <div className="space-y-5 sm:space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <ModeSwitcher mode={viewMode} onChange={setViewMode} />
-        {viewMode !== "accounts" && viewMode !== "log" && viewMode !== "dashboard" && viewMode !== "export" && viewMode !== "templates" && viewMode !== "visuals" && viewMode !== "antiduplicates" && viewMode !== "assignment" && viewMode !== "automation" && viewMode !== "diagnostics" ? (
+        {viewMode !== "accounts" && viewMode !== "log" && viewMode !== "dashboard" && viewMode !== "export" && viewMode !== "templates" && viewMode !== "visuals" && viewMode !== "images" && viewMode !== "groupprep" && viewMode !== "groupbinding" && viewMode !== "service" && viewMode !== "antiduplicates" && viewMode !== "assignment" && viewMode !== "automation" && viewMode !== "diagnostics" ? (
           <div className="text-sm text-navy-muted">
             В работе: <strong className="text-navy">{stats.statuses.in_progress ?? 0}</strong>
+            {" · "}
+            need_vk_url: <strong className="text-navy">{stats.statuses.need_vk_url ?? 0}</strong>
             {" · "}
             Новых: <strong className="text-navy">{stats.statuses.new ?? 0}</strong>
           </div>
@@ -1625,6 +2951,43 @@ export default function VkTasksTable() {
         <VkTemplatesPanel />
       ) : viewMode === "visuals" ? (
         <VkVisualTemplatesPanel />
+      ) : viewMode === "groupbinding" ? (
+        <VkGroupBindingPanel tasks={tasks} accounts={accounts} onTasksUpdated={loadTasks} />
+      ) : viewMode === "groupprep" ? (
+        <VkGroupPrepPanel
+          tasks={tasks}
+          accounts={accounts}
+          onTaskUpdated={(updated) => {
+            setTasks((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+          }}
+          onOpenImagesTab={(taskId) => {
+            setImagesFocusTaskId(taskId);
+            setViewMode("images");
+          }}
+        />
+      ) : viewMode === "service" ? (
+        <VkServicePanel
+          onResetComplete={async () => {
+            await loadTasks();
+            await loadAccounts();
+            setLastBindBatch(null);
+            setBindBatches([]);
+          }}
+        />
+      ) : viewMode === "images" ? (
+        <VkImagesPanel
+          tasks={tasks}
+          initialTaskId={imagesFocusTaskId}
+          onTaskUpdated={(updated) => {
+            setTasks((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+          }}
+          onTasksUpdated={(updatedTasks) => {
+            setTasks((prev) => {
+              const map = new Map(updatedTasks.map((item) => [item.id, item]));
+              return prev.map((item) => map.get(item.id) ?? item);
+            });
+          }}
+        />
       ) : viewMode === "antiduplicates" ? (
         <VkAntiDuplicatePanel
           tasks={tasks}

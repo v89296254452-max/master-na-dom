@@ -56,7 +56,9 @@ function countByStatus(tasks: VkTask[]): Record<VkTaskStatus, number> {
   const counts: Record<VkTaskStatus, number> = {
     new: 0,
     in_progress: 0,
+    need_vk_url: 0,
     created: 0,
+    ready_for_worker: 0,
     filled: 0,
     posted: 0,
     error: 0,
@@ -75,13 +77,16 @@ function computeOverall(tasks: VkTask[]): VkDashboardOverall {
 
   return {
     total,
-    new: counts.new,
-    in_progress: counts.in_progress,
-    created: counts.created,
-    filled: counts.filled,
+    groupsCreated: counts.created,
+    readyForWorker: counts.ready_for_worker,
     posted: counts.posted,
     error: counts.error,
     completionPercent: calcPercent(counts.posted, total),
+    new: counts.new,
+    in_progress: counts.in_progress,
+    need_vk_url: counts.need_vk_url,
+    created: counts.created,
+    filled: counts.filled,
   };
 }
 

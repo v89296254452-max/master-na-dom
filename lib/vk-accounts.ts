@@ -145,6 +145,7 @@ export function computeAccountStats(tasks: VkTask[], accountId: string): VkAccou
   return {
     total: assigned.length,
     in_progress: assigned.filter((task) => task.status === "in_progress").length,
+    need_vk_url: assigned.filter((task) => task.status === "need_vk_url").length,
     created: assigned.filter((task) => task.status === "created").length,
     filled: assigned.filter((task) => task.status === "filled").length,
     posted: assigned.filter((task) => task.status === "posted").length,

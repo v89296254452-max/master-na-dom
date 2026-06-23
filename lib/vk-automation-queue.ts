@@ -10,12 +10,34 @@ import type {
   VkAutomationQueueStats,
 } from "./vk-automation-queue-types";
 import { VK_AUTOMATION_ACTIONS } from "./vk-automation-queue-types";
-import { isAccountEligibleForAssignment } from "./vk-account-auth";
+import {
+  computeAutomationReadinessStats,
+  explainTaskNotStrictReady,
+  getAutomationTargetTasks,
+  isTaskReadyForWorker,
+} from "./vk-automation-readiness";
 import { getVkAccountById, readVkAccountsFile } from "./vk-accounts";
 import { appendVkTaskLogEntry } from "./vk-task-log";
 import type { VkTaskStatus } from "./vk-task-types";
 import { VK_TASK_STATUSES } from "./vk-task-types";
+import {
+  promoteEligibleTasksToReady,
+  reconcileBrokenReadyForWorkerTasks,
+} from "./vk-task-status-server";
+import { normalizeTaskIdList } from "./vk-task-id-list";
 import { readVkTasksFile, updateVkTask, writeVkTasksFile } from "./vk-tasks";
+import {
+  WORKER_PIPELINE,
+  buildTaskPipelineOverview,
+  checkPredecessorForClaim,
+  enforcePipelineSkipsForBlockedPending,
+  isWorkerPipelineAction,
+  pipelineJobId,
+  predecessorFailureMessage,
+  skipPendingJob,
+  sortPendingJobsForClaim,
+} from "./vk-automation-pipeline";
+import type { TaskPipelineOverviewRow, WorkerPipelineAction } from "./vk-automation-pipeline";
 
 const VK_AUTOMATION_QUEUE_PATH = path.join(process.cwd(), "data", "vk-automation-queue.json");
 
@@ -117,30 +139,27 @@ export function computeAutomationQueueStats(jobs: VkAutomationJob[]): VkAutomati
   };
 }
 
+export function computeAutomationReadiness(
+  jobs: VkAutomationJob[] = readVkAutomationQueueFile()
+) {
+  const tasks = readVkTasksFile();
+  const accounts = readVkAccountsFile();
+  return computeAutomationReadinessStats(tasks, jobs, accounts);
+}
+
 export function getRecentAutomationJobs(jobs: VkAutomationJob[], limit = 100): VkAutomationJob[] {
   return [...jobs]
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
     .slice(0, limit);
 }
 
-const AUTOMATION_PIPELINE: Array<{ action: VkAutomationAction; payload?: Record<string, unknown> }> = [
-  { action: "login_account" },
-  { action: "create_group" },
-  { action: "fill_description" },
-  { action: "upload_avatar" },
-  { action: "upload_cover" },
-  { action: "publish_pinned_post" },
-  { action: "publish_post", payload: { postKey: "post2" } },
-  { action: "publish_post", payload: { postKey: "post3" } },
-  { action: "publish_post", payload: { postKey: "post4" } },
-  { action: "publish_post", payload: { postKey: "post5" } },
-  { action: "save_result", payload: { taskStatus: "created" } },
-];
+export type { TaskPipelineOverviewRow };
 
-function pipelineJobId(taskId: string, action: VkAutomationAction, payload?: Record<string, unknown>): string {
-  const postKey = typeof payload?.postKey === "string" ? payload.postKey : "";
-  return `${taskId}::${action}${postKey ? `::${postKey}` : ""}`;
-}
+/** @deprecated use WORKER_PIPELINE from vk-automation-pipeline */
+const READY_WORKER_PIPELINE: Array<{ action: VkAutomationAction; payload?: Record<string, unknown> }> =
+  WORKER_PIPELINE.map((action) =>
+    action === "save_result" ? { action, payload: { taskStatus: "posted" } } : { action }
+  );
 
 function hasActivePipelineJob(jobs: VkAutomationJob[], jobId: string): boolean {
   return jobs.some(
@@ -150,50 +169,16 @@ function hasActivePipelineJob(jobs: VkAutomationJob[], jobId: string): boolean {
   );
 }
 
-function createSkippedJob(
-  taskId: string,
-  accountId: string,
-  reason: string,
-  timestamp: string
-): VkAutomationJob {
-  return {
-    id: `skip-${taskId}-${timestamp}`,
-    taskId,
-    accountId: accountId || "—",
-    action: "save_result",
-    status: "skipped",
-    payload: {},
-    result: {},
-    error: reason,
-    attempts: 0,
-    createdAt: timestamp,
-    updatedAt: timestamp,
-    startedAt: "",
-    completedAt: timestamp,
-  };
-}
-
-function getInProgressTasks(tasks: ReturnType<typeof readVkTasksFile>, taskIds?: string[]) {
-  let filtered = tasks.filter((task) => task.status === "in_progress");
-
-  if (taskIds && taskIds.length > 0) {
-    const idSet = new Set(taskIds);
-    filtered = filtered.filter((task) => idSet.has(task.id));
-  }
-
-  return filtered;
-}
-
 function appendPipelineJobsForTask(
   jobs: VkAutomationJob[],
-  task: { id: string; assignedAccount: string },
+  task: ReturnType<typeof readVkTasksFile>[number],
   accountId: string,
   timestamp: string
 ): number {
   let taskJobsCreated = 0;
 
-  for (const step of AUTOMATION_PIPELINE) {
-    const jobId = pipelineJobId(task.id, step.action, step.payload);
+  for (const step of READY_WORKER_PIPELINE) {
+    const jobId = pipelineJobId(task.id, step.action);
     if (hasActivePipelineJob(jobs, jobId)) continue;
 
     const job = normalizeJob({
@@ -232,23 +217,18 @@ function generateJobsForTasks(
   let skipped = 0;
 
   for (const task of tasks) {
-    const accountId = task.assignedAccount.trim();
-
-    if (!accountId) {
-      errors.push(`${task.id}: не назначен assignedAccount`);
+    if (!task.vkGroupId.trim()) {
       continue;
     }
 
+    if (!isTaskReadyForWorker(task, accounts)) {
+      continue;
+    }
+
+    const accountId = task.assignedAccount.trim();
     const account = getVkAccountById(accountId, accounts);
     if (!account) {
       errors.push(`${task.id}: аккаунт "${accountId}" не найден`);
-      continue;
-    }
-
-    if (!isAccountEligibleForAssignment(account)) {
-      jobs.push(
-        createSkippedJob(task.id, accountId, "Аккаунт не active или authStatus !== connected", timestamp)
-      );
       skipped += 1;
       continue;
     }
@@ -262,6 +242,96 @@ function generateJobsForTasks(
   }
 
   return { created, skipped };
+}
+
+function purgeIneligibleAutomationJobs(
+  jobs: VkAutomationJob[],
+  tasks: ReturnType<typeof readVkTasksFile>,
+  accounts: ReturnType<typeof readVkAccountsFile>
+): { jobs: VkAutomationJob[]; removed: number } {
+  const taskMap = new Map(tasks.map((task) => [task.id, task]));
+  const before = jobs.length;
+  const remaining = jobs.filter((job) => {
+    const task = taskMap.get(job.taskId);
+    if (!task || !task.vkGroupId.trim()) {
+      return false;
+    }
+    return isTaskReadyForWorker(task, accounts);
+  });
+
+  return {
+    jobs: remaining,
+    removed: before - remaining.length,
+  };
+}
+
+function resolveSelectedTasksForQueue(
+  requestedIds: string[],
+  tasks: ReturnType<typeof readVkTasksFile>,
+  accounts: ReturnType<typeof readVkAccountsFile>,
+  errors: string[]
+): ReturnType<typeof readVkTasksFile> {
+  const taskMap = new Map(tasks.map((task) => [task.id, task]));
+  const targetTasks: ReturnType<typeof readVkTasksFile> = [];
+
+  for (const taskId of requestedIds) {
+    const task = taskMap.get(taskId);
+    if (!task) {
+      errors.push(`${taskId}: задача не найдена`);
+      continue;
+    }
+
+    if (!isTaskReadyForWorker(task, accounts)) {
+      errors.push(explainTaskNotStrictReady(task, accounts));
+      continue;
+    }
+
+    targetTasks.push(task);
+  }
+
+  return targetTasks;
+}
+
+function buildFreshAutomationQueueForTaskIds(
+  taskIds: string[],
+  accounts: ReturnType<typeof readVkAccountsFile>,
+  tasks: ReturnType<typeof readVkTasksFile>,
+  errors: string[]
+): {
+  jobs: VkAutomationJob[];
+  targetTasks: ReturnType<typeof readVkTasksFile>;
+  created: number;
+  skipped: number;
+} {
+  const targetTasks = resolveSelectedTasksForQueue(taskIds, tasks, accounts, errors);
+  const jobs: VkAutomationJob[] = [];
+  const { created, skipped } = generateJobsForTasks(jobs, targetTasks, accounts, errors);
+
+  return { jobs, targetTasks, created, skipped };
+}
+
+function buildFreshAutomationQueue(
+  accounts: ReturnType<typeof readVkAccountsFile>,
+  tasks: ReturnType<typeof readVkTasksFile>,
+  errors: string[]
+): { jobs: VkAutomationJob[]; targetTasks: ReturnType<typeof readVkTasksFile>; created: number; skipped: number } {
+  const targetTasks = getAutomationTargetTasks(tasks, accounts);
+  const jobs: VkAutomationJob[] = [];
+  const { created, skipped } = generateJobsForTasks(jobs, targetTasks, accounts, errors);
+
+  return { jobs, targetTasks, created, skipped };
+}
+
+function prepareAutomationTasksForQueue(): number {
+  const tasks = readVkTasksFile();
+  const accounts = readVkAccountsFile();
+  const demoted = reconcileBrokenReadyForWorkerTasks(tasks, accounts);
+
+  if (demoted > 0) {
+    writeVkTasksFile(tasks);
+  }
+
+  return demoted;
 }
 
 export function clearAutomationQueueStatuses(
@@ -278,6 +348,17 @@ export function clearAutomationQueueStatuses(
   return {
     removed,
     stats: computeAutomationQueueStats(remaining),
+  };
+}
+
+/** Полностью очищает data/vk-automation-queue.json (все статусы). */
+export function clearAutomationQueueCompletely(): VkAutomationClearResult {
+  const removed = readVkAutomationQueueFile().length;
+  writeVkAutomationQueueFile([]);
+
+  return {
+    removed,
+    stats: computeAutomationQueueStats([]),
   };
 }
 
@@ -306,10 +387,144 @@ export function removeJobsForTasks(
   };
 }
 
-export function recreateAutomationQueue(taskIds?: string[]): VkAutomationGenerateResult {
+export interface VkAutomationPromoteResult {
+  promoted: number;
+  generate: VkAutomationGenerateResult;
+}
+
+export function promoteReadyTasksAndSave(): number {
   const tasks = readVkTasksFile();
   const accounts = readVkAccountsFile();
-  const targetTasks = getInProgressTasks(tasks, taskIds);
+  const promoted = promoteEligibleTasksToReady(tasks, accounts);
+  if (promoted > 0) {
+    writeVkTasksFile(tasks);
+  }
+  return promoted;
+}
+
+export async function resetAndGenerateAutomationQueueForBindBatch(
+  batchId: string
+): Promise<VkAutomationGenerateResult> {
+  const normalized = batchId.trim();
+  if (!normalized) {
+    return {
+      created: 0,
+      skipped: 0,
+      removed: 0,
+      tasksUsed: 0,
+      taskIds: [],
+      errors: ["batchId обязателен"],
+      stats: computeAutomationQueueStats(readVkAutomationQueueFile()),
+    };
+  }
+
+  const tasks = readVkTasksFile();
+  const taskIds = tasks
+    .filter((task) => task.lastBindBatchId.trim() === normalized)
+    .map((task) => task.id);
+
+  if (taskIds.length === 0) {
+    return {
+      created: 0,
+      skipped: 0,
+      removed: readVkAutomationQueueFile().length,
+      tasksUsed: 0,
+      taskIds: [],
+      errors: [`Нет задач с lastBindBatchId = ${normalized}`],
+      stats: computeAutomationQueueStats([]),
+    };
+  }
+
+  const result = await resetAndGenerateAutomationQueueForTaskIds(taskIds);
+  return {
+    ...result,
+    errors: result.errors.length > 0 ? result.errors : [],
+  };
+}
+
+export async function resetAndGenerateAutomationQueueForTaskIds(
+  taskIdsInput: string[] | string
+): Promise<VkAutomationGenerateResult> {
+  const taskIds = normalizeTaskIdList(taskIdsInput);
+
+  if (taskIds.length === 0) {
+    return {
+      created: 0,
+      skipped: 0,
+      removed: 0,
+      tasksUsed: 0,
+      taskIds: [],
+      errors: ["Список taskIds пуст"],
+      stats: computeAutomationQueueStats(readVkAutomationQueueFile()),
+    };
+  }
+
+  const removed = readVkAutomationQueueFile().length;
+  writeVkAutomationQueueFile([]);
+
+  prepareAutomationTasksForQueue();
+
+  const accounts = readVkAccountsFile();
+  const tasks = readVkTasksFile();
+  const errors: string[] = [];
+  const { jobs, targetTasks, created, skipped } = buildFreshAutomationQueueForTaskIds(
+    taskIds,
+    accounts,
+    tasks,
+    errors
+  );
+
+  writeVkAutomationQueueFile(jobs);
+
+  return {
+    removed,
+    tasksUsed: targetTasks.length,
+    taskIds: targetTasks.map((task) => task.id),
+    created,
+    skipped,
+    errors,
+    stats: computeAutomationQueueStats(jobs),
+  };
+}
+
+export async function resetAndGenerateAutomationQueue(): Promise<VkAutomationGenerateResult> {
+  const removed = readVkAutomationQueueFile().length;
+  writeVkAutomationQueueFile([]);
+
+  prepareAutomationTasksForQueue();
+
+  const accounts = readVkAccountsFile();
+  const tasks = readVkTasksFile();
+  const errors: string[] = [];
+  const { jobs, targetTasks, created, skipped } = buildFreshAutomationQueue(accounts, tasks, errors);
+
+  writeVkAutomationQueueFile(jobs);
+
+  const taskIds = targetTasks.map((task) => task.id);
+
+  return {
+    removed,
+    tasksUsed: targetTasks.length,
+    taskIds,
+    created,
+    skipped,
+    errors,
+    stats: computeAutomationQueueStats(jobs),
+  };
+}
+
+export async function promoteAndGenerateAutomationQueue(): Promise<VkAutomationPromoteResult> {
+  const promoted = promoteReadyTasksAndSave();
+  const generate = await generateAutomationQueue();
+
+  return { promoted, generate };
+}
+
+export async function recreateAutomationQueue(taskIds?: string[]): Promise<VkAutomationGenerateResult> {
+  prepareAutomationTasksForQueue();
+  const tasks = readVkTasksFile();
+  const accounts = readVkAccountsFile();
+  const targetTasks = getAutomationTargetTasks(tasks, accounts, taskIds);
   const targetTaskIdSet = new Set(targetTasks.map((task) => task.id));
   const errors: string[] = [];
 
@@ -319,8 +534,8 @@ export function recreateAutomationQueue(taskIds?: string[]): VkAutomationGenerat
       skipped: 0,
       removed: 0,
       errors: taskIds?.length
-        ? ["Нет in_progress задач для указанных taskId"]
-        : ["Нет in_progress задач для пересоздания очереди"],
+        ? ["Нет задач ready_for_worker для указанных taskId"]
+        : ["Нет задач ready_for_worker"],
       stats: computeAutomationQueueStats(readVkAutomationQueueFile()),
     };
   }
@@ -333,7 +548,9 @@ export function recreateAutomationQueue(taskIds?: string[]): VkAutomationGenerat
   );
   jobs = afterRemove;
 
-  const { created, skipped } = generateJobsForTasks(jobs, targetTasks, accounts, errors);
+  const freshTasks = readVkTasksFile();
+  const preparedTargets = freshTasks.filter((task) => targetTaskIdSet.has(task.id));
+  const { created, skipped } = generateJobsForTasks(jobs, preparedTargets, accounts, errors);
   writeVkAutomationQueueFile(jobs);
 
   return {
@@ -345,12 +562,31 @@ export function recreateAutomationQueue(taskIds?: string[]): VkAutomationGenerat
   };
 }
 
-export function generateAutomationQueue(): VkAutomationGenerateResult {
-  const jobs = readVkAutomationQueueFile();
+export async function generateAutomationQueue(): Promise<VkAutomationGenerateResult> {
+  prepareAutomationTasksForQueue();
+
   const accounts = readVkAccountsFile();
   const tasks = readVkTasksFile();
-  const targetTasks = getInProgressTasks(tasks);
   const errors: string[] = [];
+
+  let jobs = readVkAutomationQueueFile();
+  const { jobs: purgedJobs, removed: purged } = purgeIneligibleAutomationJobs(jobs, tasks, accounts);
+  jobs = purgedJobs;
+
+  const targetTasks = getAutomationTargetTasks(tasks, accounts);
+
+  if (targetTasks.length === 0 && jobs.length === 0) {
+    writeVkAutomationQueueFile([]);
+    return {
+      created: 0,
+      skipped: 0,
+      removed: purged,
+      tasksUsed: 0,
+      taskIds: [],
+      errors: ["Нет задач strict ready_for_worker (vkGroupId + connected account)"],
+      stats: computeAutomationQueueStats([]),
+    };
+  }
 
   const { created, skipped } = generateJobsForTasks(jobs, targetTasks, accounts, errors);
   writeVkAutomationQueueFile(jobs);
@@ -358,6 +594,9 @@ export function generateAutomationQueue(): VkAutomationGenerateResult {
   return {
     created,
     skipped,
+    removed: purged,
+    tasksUsed: targetTasks.length,
+    taskIds: targetTasks.map((task) => task.id),
     errors,
     stats: computeAutomationQueueStats(jobs),
   };
@@ -370,7 +609,7 @@ function isTaskStatus(value: unknown): value is VkTaskStatus {
 function applySaveResultToTask(job: VkAutomationJob, result: Record<string, unknown>): void {
   const vkUrl = typeof result.vkUrl === "string" ? result.vkUrl.trim() : "";
   const vkGroupId = typeof result.vkGroupId === "string" ? result.vkGroupId.trim() : "";
-  const taskStatus = isTaskStatus(result.taskStatus) ? result.taskStatus : "created";
+  const taskStatus = isTaskStatus(result.taskStatus) ? result.taskStatus : "filled";
 
   const tasks = readVkTasksFile();
   const existing = tasks.find((task) => task.id === job.taskId);
@@ -403,25 +642,90 @@ function applySaveResultToTask(job: VkAutomationJob, result: Record<string, unkn
   });
 }
 
-export function claimNextPendingAutomationJob(jobs: VkAutomationJob[]): VkAutomationJob | null {
-  const index = jobs.findIndex((job) => job.status === "pending");
+function isTaskEligibleForPipeline(
+  task: ReturnType<typeof readVkTasksFile>[number],
+  accounts: ReturnType<typeof readVkAccountsFile>
+): boolean {
+  return isTaskReadyForWorker(task, accounts);
+}
 
-  if (index === -1) {
-    return null;
+export function getTaskPipelineOverview(jobs: VkAutomationJob[] = readVkAutomationQueueFile()): TaskPipelineOverviewRow[] {
+  const overview = buildTaskPipelineOverview(jobs);
+  const overviewByTaskId = new Map(overview.map((row) => [row.taskId, row]));
+  const accounts = readVkAccountsFile();
+  const tasks = readVkTasksFile().filter((task) => isTaskReadyForWorker(task, accounts));
+
+  const merged: TaskPipelineOverviewRow[] = [];
+
+  for (const task of tasks.sort((a, b) => a.id.localeCompare(b.id))) {
+    const existing = overviewByTaskId.get(task.id);
+    if (existing) {
+      merged.push(existing);
+      continue;
+    }
+
+    const steps = {} as Record<WorkerPipelineAction, VkAutomationJobStatus | "—">;
+    for (const action of WORKER_PIPELINE) {
+      steps[action] = "—";
+    }
+
+    merged.push({
+      taskId: task.id,
+      accountId: task.assignedAccount.trim(),
+      steps,
+    });
   }
 
-  const timestamp = nowIso();
-  const claimed: VkAutomationJob = {
-    ...jobs[index],
-    status: "running",
-    attempts: jobs[index].attempts + 1,
-    startedAt: timestamp,
-    updatedAt: timestamp,
-    error: "",
-  };
+  return merged;
+}
 
-  jobs[index] = claimed;
-  return claimed;
+export function claimNextPendingAutomationJob(jobs: VkAutomationJob[]): VkAutomationJob | null {
+  const timestamp = nowIso();
+
+  enforcePipelineSkipsForBlockedPending(jobs);
+
+  const orderedIndices = sortPendingJobsForClaim(jobs);
+  const tasks = readVkTasksFile();
+  const accounts = readVkAccountsFile();
+  const taskMap = new Map(tasks.map((task) => [task.id, task]));
+
+  for (const index of orderedIndices) {
+    const job = jobs[index];
+    if (job.status !== "pending" || !isWorkerPipelineAction(job.action)) {
+      continue;
+    }
+
+    const task = taskMap.get(job.taskId);
+    if (!task || !isTaskEligibleForPipeline(task, accounts)) {
+      if (task && !task.vkGroupId.trim()) {
+        jobs[index] = skipPendingJob(job, "Task is not ready: vkGroupId missing", timestamp);
+      }
+      continue;
+    }
+
+    const check = checkPredecessorForClaim(jobs, job.taskId, job.action);
+    if (check === "block") {
+      jobs[index] = skipPendingJob(job, predecessorFailureMessage(job.action), timestamp);
+      continue;
+    }
+    if (check === "wait") {
+      continue;
+    }
+
+    const claimed: VkAutomationJob = {
+      ...job,
+      status: "running",
+      attempts: job.attempts + 1,
+      startedAt: timestamp,
+      updatedAt: timestamp,
+      error: "",
+    };
+
+    jobs[index] = claimed;
+    return claimed;
+  }
+
+  return null;
 }
 
 export function completeAutomationJob(
@@ -455,13 +759,17 @@ export function completeAutomationJob(
     return retried;
   }
 
-  const status: VkAutomationJobStatus = input.status === "failed" ? "failed" : "success";
+  const status: VkAutomationJobStatus =
+    input.status === "failed" ? "failed" : input.status === "skipped" ? "skipped" : "success";
 
   const updated: VkAutomationJob = {
     ...job,
     status,
     result: input.result ? normalizeRecord(input.result) : job.result,
-    error: input.status === "failed" ? (input.error?.trim() || "Automation failed") : "",
+    error:
+      input.status === "failed" || input.status === "skipped"
+        ? (input.error?.trim() || (input.status === "skipped" ? "Skipped" : "Automation failed"))
+        : "",
     updatedAt: timestamp,
     completedAt: timestamp,
   };
@@ -470,6 +778,10 @@ export function completeAutomationJob(
 
   if (updated.action === "save_result" && status === "success") {
     applySaveResultToTask(updated, updated.result);
+  }
+
+  if (status === "failed" && isWorkerPipelineAction(updated.action)) {
+    enforcePipelineSkipsForBlockedPending(jobs);
   }
 
   return updated;

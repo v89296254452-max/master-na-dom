@@ -20,7 +20,11 @@ import {
   mergeQualityCheck,
   type VkTaskQualityCheck,
 } from "@/lib/vk-quality-check";
+import { mergeManualSetup, buildPreparedManualSetup, type VkTaskManualSetup } from "@/lib/vk-manual-setup";
+import { resolveAndUpdateVkTask } from "@/lib/vk-url-resolve";
+import { taskNeedsVkUrlResolve } from "@/lib/vk-url";
 import { normalizeContentPack } from "@/lib/vk-content-pack";
+import { statusAfterVkGroupLinked } from "@/lib/vk-task-status";
 
 function isTaskStatus(value: unknown): value is VkTaskStatus {
   return typeof value === "string" && VK_TASK_STATUSES.includes(value as VkTaskStatus);
@@ -57,13 +61,41 @@ export async function POST(request: Request) {
     }
 
     const patch: Partial<
-      Pick<VkTask, "vkUrl" | "vkGroupId" | "assignedAccount" | "status" | "qualityCheck" | "contentPack">
+      Pick<
+        VkTask,
+        "vkUrl" | "vkGroupId" | "assignedAccount" | "status" | "qualityCheck" | "manualSetup" | "contentPack" | "manualCreated"
+      >
     > = {};
     let nextQualityCheck = existing.qualityCheck;
+    let nextManualSetup = existing.manualSetup;
 
     if (typeof body.vkUrl === "string") patch.vkUrl = body.vkUrl.trim();
     if (typeof body.vkGroupId === "string") patch.vkGroupId = body.vkGroupId.trim();
     if (typeof body.assignedAccount === "string") patch.assignedAccount = body.assignedAccount.trim();
+
+    if (body.manualCreated === true || body.markManualCreated === true || body.action === "markManualCreated") {
+      const vkGroupId = patch.vkGroupId ?? existing.vkGroupId.trim();
+
+      if (!vkGroupId) {
+        return NextResponse.json(
+          { success: false, error: "vkGroupId обязателен для «Группа создана вручную»" },
+          { status: 400 }
+        );
+      }
+
+      patch.vkGroupId = vkGroupId;
+      if (!patch.vkUrl && !existing.vkUrl.trim()) {
+        patch.vkUrl = `https://vk.com/club${vkGroupId.replace(/^-/, "")}`;
+      }
+      patch.manualCreated = true;
+      patch.status = statusAfterVkGroupLinked(
+        {
+          vkGroupId,
+          assignedAccount: patch.assignedAccount ?? existing.assignedAccount,
+        },
+        readVkAccountsFile()
+      );
+    }
 
     if (body.qualityCheck && typeof body.qualityCheck === "object") {
       nextQualityCheck = mergeQualityCheck(
@@ -71,6 +103,19 @@ export async function POST(request: Request) {
         body.qualityCheck as Partial<VkTaskQualityCheck>
       );
       patch.qualityCheck = nextQualityCheck;
+    }
+
+    if (body.manualSetup && typeof body.manualSetup === "object") {
+      nextManualSetup = mergeManualSetup(
+        existing.manualSetup,
+        body.manualSetup as Partial<VkTaskManualSetup>
+      );
+      patch.manualSetup = nextManualSetup;
+    }
+
+    if (body.action === "markGroupPrepared" || body.markGroupPrepared === true) {
+      patch.manualSetup = buildPreparedManualSetup();
+      patch.status = "ready_for_worker";
     }
 
     if (body.regenerateContent === true) {
@@ -236,7 +281,7 @@ export async function PATCH(request: Request) {
         taskId: task.id,
         action: "assigned",
         oldStatus: "new",
-        newStatus: "in_progress",
+        newStatus: "need_vk_url",
         assignedAccount,
         vkUrl: task.vkUrl,
         vkGroupId: task.vkGroupId,
@@ -343,6 +388,39 @@ export async function PUT(request: Request) {
     const tasks = readVkTasksFile();
     const beforeMap = new Map(tasks.map((task) => [task.id, task]));
     const result = bulkUpdateVkTasks(tasks, updates);
+    const resolveWarnings: string[] = [];
+
+    for (const update of updates) {
+      if (result.notFound.includes(update.id)) continue;
+
+      const task = tasks.find((item) => item.id === update.id);
+      if (!task || !taskNeedsVkUrlResolve(task)) continue;
+
+      const accountId = task.assignedAccount.trim();
+      if (!accountId) {
+        resolveWarnings.push(`${task.id}: vkUrl без vkGroupId — assignedAccount не задан`);
+        continue;
+      }
+
+      try {
+        const resolved = await resolveAndUpdateVkTask({
+          taskId: task.id,
+          vkUrl: task.vkUrl,
+          accountId,
+          save: false,
+        });
+        const index = tasks.findIndex((item) => item.id === task.id);
+        if (index >= 0 && resolved.resolve.resolved) {
+          tasks[index] = resolved.task;
+        } else if (!resolved.resolve.resolved) {
+          resolveWarnings.push(`${task.id}: ${resolved.resolve.error || "resolve failed"}`);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "resolve failed";
+        resolveWarnings.push(`${task.id}: ${message}`);
+      }
+    }
+
     writeVkTasksFile(tasks);
 
     const logEntries = updates
@@ -373,6 +451,7 @@ export async function PUT(request: Request) {
       success: true,
       updated: result.updated,
       notFound: result.notFound,
+      resolveWarnings,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Не удалось выполнить массовое обновление";

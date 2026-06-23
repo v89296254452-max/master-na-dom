@@ -1,11 +1,22 @@
-import { vkApiCallRaw, toVkOwnerId } from "./vk-api-client";
+import {
+  logVkApiRequest,
+  logVkApiResponse,
+  vkApiCallRaw,
+  toVkOwnerId,
+  VK_API_VERSION,
+  sanitizeVkScreenName,
+} from "./vk-api-client";
 import type { VkAccount } from "./vk-account-types";
 import {
   VK_API_DIAGNOSTIC_METHOD_LABELS,
   type VkApiDiagnosticMethod,
   type VkApiDiagnosticStepResult,
   type VkApiDiagnosticsRunResult,
+  type VkGroupsCreateTestResult,
+  type VkExistingGroupTestResult,
+  type VkResolveUrlTestResult,
 } from "./vk-api-diagnostics-types";
+import { resolveVkUrl } from "./vk-url-resolve";
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -35,6 +46,7 @@ function toStepResult(
       params: raw.requestParams,
     },
     response: raw.body.response ?? null,
+    rawBody: raw.body,
     vkError: vkApiError
       ? {
           code: vkApiError.error_code,
@@ -170,11 +182,34 @@ export async function runVkApiDiagnostics(account: VkAccount): Promise<VkApiDiag
   }
 
   if (testGroupId) {
-    const editStep = await runStep(accessToken, "groups.edit", {
-      group_id: testGroupId,
-      description: `[DIAG] groups.edit test ${stamp}`,
-    });
+    const editStep = await runStep(
+      accessToken,
+      "groups.edit",
+      {
+        group_id: testGroupId,
+        title: `[DIAG] setup ${stamp}`,
+        description: `[DIAG] groups.edit description ${stamp}`,
+        website: "https://example.com",
+      },
+      "title + description + website"
+    );
     steps.push(editStep);
+
+    const addressRaw = await vkApiCallRaw(
+      "groups.edit",
+      {
+        group_id: testGroupId,
+        screen_name: sanitizeVkScreenName(`diag-test-${stamp}`),
+      },
+      accessToken
+    );
+    steps.push(
+      toStepResult(
+        "groups.editAddress",
+        addressRaw,
+        "Короткий адрес (screen_name через groups.edit)"
+      )
+    );
 
     const wallStep = await runStep(accessToken, "wall.post", {
       owner_id: toVkOwnerId(testGroupId),
@@ -190,6 +225,24 @@ export async function runVkApiDiagnostics(account: VkAccount): Promise<VkApiDiag
         method: "groups.edit",
         url: "https://api.vk.com/method/groups.edit",
         params: { v: "5.199", access_token: "***" },
+      },
+      response: null,
+      vkError: {
+        message: "Пропущено: нет group_id (groups.create не удался и admin-группы не найдены)",
+      },
+      httpError: null,
+      durationMs: 0,
+      success: false,
+      note: "Требуется успешный groups.create или admin-группа из groups.get",
+    });
+
+    steps.push({
+      method: "groups.editAddress",
+      label: VK_API_DIAGNOSTIC_METHOD_LABELS["groups.editAddress"],
+      request: {
+        method: "groups.edit",
+        url: "https://api.vk.com/method/groups.edit",
+        params: { v: "5.199", access_token: "***", screen_name: "(skipped)" },
       },
       response: null,
       vkError: {
@@ -257,4 +310,161 @@ export function isVkApiDiagnosticMethod(value: unknown): value is VkApiDiagnosti
       value as VkApiDiagnosticMethod
     )
   );
+}
+
+export const GROUPS_CREATE_TEST_TITLE = "TEST MASTER LEADS";
+
+export async function runGroupsCreateTest(account: VkAccount): Promise<VkGroupsCreateTestResult> {
+  const accessToken = account.accessToken.trim();
+
+  if (!accessToken) {
+    throw new Error("У аккаунта не задан accessToken");
+  }
+
+  const method = "groups.create";
+  const params = {
+    title: GROUPS_CREATE_TEST_TITLE,
+    description: "MASTER-LEADS VK API diagnostics test",
+    type: "group",
+  };
+
+  logVkApiRequest(method, params);
+
+  const raw = await vkApiCallRaw(method, params, accessToken);
+
+  logVkApiResponse(method, raw.body);
+
+  const step = toStepResult(
+    "groups.create",
+    raw,
+    `Создаёт сообщество «${GROUPS_CREATE_TEST_TITLE}» и показывает полный JSON ответ VK`
+  );
+
+  return {
+    accountId: account.id,
+    accountName: account.name,
+    ranAt: nowIso(),
+    step: {
+      ...step,
+      label: "groups.create (TEST MASTER LEADS)",
+      request: {
+        method: raw.method,
+        url: raw.url,
+        params: {
+          ...raw.requestParams,
+          v: VK_API_VERSION,
+        },
+      },
+    },
+  };
+}
+
+export async function runExistingGroupTest(
+  account: VkAccount,
+  vkGroupIdRaw: string
+): Promise<VkExistingGroupTestResult> {
+  const accessToken = account.accessToken.trim();
+  const vkGroupId = vkGroupIdRaw.trim().replace(/^-/, "");
+
+  if (!accessToken) {
+    throw new Error("У аккаунта не задан accessToken");
+  }
+
+  if (!vkGroupId) {
+    throw new Error("vkGroupId обязателен");
+  }
+
+  const groupId = Number(vkGroupId);
+  if (!Number.isFinite(groupId) || groupId <= 0) {
+    throw new Error("vkGroupId должен быть положительным числом");
+  }
+
+  const stamp = diagnosticTimestamp();
+  const steps: VkApiDiagnosticStepResult[] = [];
+
+  steps.push(
+    await runStep(accessToken, "groups.getById", {
+      group_id: groupId,
+      fields: "id,name,description,is_admin",
+    })
+  );
+
+  steps.push(
+    await runStep(
+      accessToken,
+      "groups.edit",
+      {
+        group_id: groupId,
+        title: `[DIAG] existing setup ${stamp}`,
+        description: `[DIAG] existing group edit test ${stamp}`,
+        website: "https://example.com",
+      },
+      "title + description + website"
+    )
+  );
+
+  const addressRaw = await vkApiCallRaw(
+    "groups.edit",
+    {
+      group_id: groupId,
+      screen_name: sanitizeVkScreenName(`diag-existing-${stamp}`),
+    },
+    accessToken
+  );
+  steps.push(
+    toStepResult(
+      "groups.editAddress",
+      addressRaw,
+      "Короткий адрес (screen_name через groups.edit)"
+    )
+  );
+
+  steps.push(
+    await runStep(accessToken, "wall.post", {
+      owner_id: toVkOwnerId(groupId),
+      from_group: 1,
+      message: `[DIAG] existing group wall.post test ${stamp}`,
+    })
+  );
+
+  return {
+    accountId: account.id,
+    accountName: account.name,
+    vkGroupId,
+    ranAt: nowIso(),
+    steps,
+  };
+}
+
+export async function runResolveVkUrlTest(
+  account: VkAccount,
+  vkUrlRaw: string
+): Promise<VkResolveUrlTestResult> {
+  const accessToken = account.accessToken.trim();
+  const vkUrl = vkUrlRaw.trim();
+
+  if (!accessToken) {
+    throw new Error("У аккаунта не задан accessToken");
+  }
+  if (!vkUrl) {
+    throw new Error("vkUrl обязателен");
+  }
+
+  const resolve = await resolveVkUrl(vkUrl, accessToken);
+
+  return {
+    accountId: account.id,
+    accountName: account.name,
+    vkUrl,
+    ranAt: nowIso(),
+    resolve: {
+      vkUrl: resolve.vkUrl,
+      vkGroupId: resolve.vkGroupId,
+      screenName: resolve.screenName,
+      type: resolve.type,
+      resolved: resolve.resolved,
+      error: resolve.error,
+      resolveScreenNameResponse: resolve.resolveScreenNameResponse?.raw ?? null,
+    },
+  };
 }

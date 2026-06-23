@@ -1,0 +1,42 @@
+[
+  {
+    "apiAccountId": "01",
+    "browserAccountId": "",
+    "login": "",
+    "proxy": "",
+    "status": "active",
+    "notes": ""
+  },
+  {
+    "apiAccountId": "02",
+    "browserAccountId": "",
+    "login": "",
+    "proxy": "",
+    "status": "active",
+    "notes": ""
+  },
+  {
+    "apiAccountId": "03",
+    "browserAccountId": "",
+    "login": "",
+    "proxy": "",
+    "status": "active",
+    "notes": ""
+  },
+  {
+    "apiAccountId": "04",
+    "browserAccountId": "",
+    "login": "",
+    "proxy": "",
+    "status": "active",
+    "notes": ""
+  },
+  {
+    "apiAccountId": "05",
+    "browserAccountId": "",
+    "login": "",
+    "proxy": "",
+    "status": "active",
+    "notes": ""
+  }
+]

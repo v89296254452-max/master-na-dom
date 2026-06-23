@@ -3,7 +3,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { VkAccountWithStats } from "@/lib/vk-account-types";
 import { VK_ACCOUNT_AUTH_STATUS_LABELS } from "@/lib/vk-account-types";
-import type { VkApiDiagnosticStepResult, VkApiDiagnosticsRunResult } from "@/lib/vk-api-diagnostics-types";
+import type {
+  VkApiDiagnosticStepResult,
+  VkApiDiagnosticsRunResult,
+  VkExistingGroupTestResult,
+  VkGroupsCreateTestResult,
+  VkResolveUrlTestResult,
+} from "@/lib/vk-api-diagnostics-types";
 
 function formatJson(value: unknown): string {
   try {
@@ -79,12 +85,23 @@ function StepCard({ step }: { step: VkApiDiagnosticStepResult }) {
 
           <section>
             <h4 className="mb-1 text-xs font-semibold uppercase tracking-wide text-navy-muted">
-              Ответ
+              Ответ (response)
             </h4>
             <pre className="overflow-x-auto rounded-lg bg-gray-card p-3 text-xs text-navy">
               {step.response === null ? "null" : formatJson(step.response)}
             </pre>
           </section>
+
+          {step.rawBody !== undefined ? (
+            <section>
+              <h4 className="mb-1 text-xs font-semibold uppercase tracking-wide text-navy-muted">
+                Полный JSON ответ VK API
+              </h4>
+              <pre className="overflow-x-auto rounded-lg bg-gray-card p-3 text-xs text-navy">
+                {formatJson(step.rawBody)}
+              </pre>
+            </section>
+          ) : null}
 
           {(step.vkError || step.httpError) && (
             <section>
@@ -113,8 +130,16 @@ export default function VkApiDiagnosticsPanel() {
   const [selectedAccountId, setSelectedAccountId] = useState("");
   const [loadingAccounts, setLoadingAccounts] = useState(true);
   const [running, setRunning] = useState(false);
+  const [testingCreate, setTestingCreate] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<VkApiDiagnosticsRunResult | null>(null);
+  const [groupsCreateTest, setGroupsCreateTest] = useState<VkGroupsCreateTestResult | null>(null);
+  const [existingGroupTest, setExistingGroupTest] = useState<VkExistingGroupTestResult | null>(null);
+  const [existingGroupId, setExistingGroupId] = useState("");
+  const [testingExistingGroup, setTestingExistingGroup] = useState(false);
+  const [resolveVkUrlInput, setResolveVkUrlInput] = useState("");
+  const [testingResolveVkUrl, setTestingResolveVkUrl] = useState(false);
+  const [resolveUrlTest, setResolveUrlTest] = useState<VkResolveUrlTestResult | null>(null);
 
   const loadAccounts = useCallback(async () => {
     setLoadingAccounts(true);
@@ -180,6 +205,9 @@ export default function VkApiDiagnosticsPanel() {
     setRunning(true);
     setError(null);
     setResult(null);
+    setGroupsCreateTest(null);
+    setExistingGroupTest(null);
+    setResolveUrlTest(null);
 
     try {
       const res = await fetch("/api/vk-api-diagnostics", {
@@ -198,6 +226,149 @@ export default function VkApiDiagnosticsPanel() {
       setError(err instanceof Error ? err.message : "Ошибка диагностики");
     } finally {
       setRunning(false);
+    }
+  }
+
+  async function handleTestGroupsCreate() {
+    if (!selectedAccountId) {
+      setError("Выберите аккаунт");
+      return;
+    }
+
+    if (!selectedAccount?.accessToken.trim()) {
+      setError("У выбранного аккаунта нет accessToken");
+      return;
+    }
+
+    if (
+      !confirm(
+        'Создать тестовое сообщество «TEST MASTER LEADS» через groups.create? Будет показан полный JSON ответ VK.'
+      )
+    ) {
+      return;
+    }
+
+    setTestingCreate(true);
+    setError(null);
+    setResult(null);
+    setGroupsCreateTest(null);
+    setExistingGroupTest(null);
+    setResolveUrlTest(null);
+
+    try {
+      const res = await fetch("/api/vk-api-diagnostics", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accountId: selectedAccountId,
+          action: "test-groups-create",
+        }),
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Не удалось выполнить тест groups.create");
+      }
+
+      setGroupsCreateTest(data.testResult as VkGroupsCreateTestResult);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка теста groups.create");
+    } finally {
+      setTestingCreate(false);
+    }
+  }
+
+  async function handleTestExistingGroup() {
+    if (!selectedAccountId) {
+      setError("Выберите аккаунт");
+      return;
+    }
+
+    if (!selectedAccount?.accessToken.trim()) {
+      setError("У выбранного аккаунта нет accessToken");
+      return;
+    }
+
+    if (!existingGroupId.trim()) {
+      setError("Укажите vkGroupId");
+      return;
+    }
+
+    setTestingExistingGroup(true);
+    setError(null);
+    setResult(null);
+    setGroupsCreateTest(null);
+    setExistingGroupTest(null);
+    setResolveUrlTest(null);
+
+    try {
+      const res = await fetch("/api/vk-api-diagnostics", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accountId: selectedAccountId,
+          action: "test-existing-group",
+          vkGroupId: existingGroupId.trim(),
+        }),
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Не удалось проверить группу");
+      }
+
+      setExistingGroupTest(data.testResult as VkExistingGroupTestResult);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка проверки группы");
+    } finally {
+      setTestingExistingGroup(false);
+    }
+  }
+
+  async function handleTestResolveVkUrl() {
+    if (!selectedAccountId) {
+      setError("Выберите аккаунт");
+      return;
+    }
+
+    if (!selectedAccount?.accessToken.trim()) {
+      setError("У выбранного аккаунта нет accessToken");
+      return;
+    }
+
+    if (!resolveVkUrlInput.trim()) {
+      setError("Укажите vkUrl");
+      return;
+    }
+
+    setTestingResolveVkUrl(true);
+    setError(null);
+    setResult(null);
+    setGroupsCreateTest(null);
+    setExistingGroupTest(null);
+    setResolveUrlTest(null);
+
+    try {
+      const res = await fetch("/api/vk-api-diagnostics", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accountId: selectedAccountId,
+          action: "test-resolve-vk-url",
+          vkUrl: resolveVkUrlInput.trim(),
+        }),
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Не удалось распознать VK ссылку");
+      }
+
+      setResolveUrlTest(data.testResult as VkResolveUrlTestResult);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка распознавания VK ссылки");
+    } finally {
+      setTestingResolveVkUrl(false);
     }
   }
 
@@ -251,7 +422,7 @@ export default function VkApiDiagnosticsPanel() {
             <button
               type="button"
               onClick={loadAccounts}
-              disabled={loadingAccounts || running}
+              disabled={loadingAccounts || running || testingCreate}
               className="rounded-lg border border-gray-border bg-white px-4 py-2 text-sm font-medium text-navy hover:bg-gray-card disabled:opacity-50"
             >
               {loadingAccounts ? "Обновление..." : "Обновить"}
@@ -259,13 +430,68 @@ export default function VkApiDiagnosticsPanel() {
 
             <button
               type="button"
+              onClick={handleTestGroupsCreate}
+              disabled={testingCreate || running || testingExistingGroup || !selectedAccountId}
+              className="rounded-lg border border-orange bg-orange/10 px-4 py-2 text-sm font-semibold text-orange hover:bg-orange/20 disabled:opacity-50"
+            >
+              {testingCreate ? "Тест..." : "Тест groups.create"}
+            </button>
+
+            <button
+              type="button"
               onClick={handleRunDiagnostics}
-              disabled={running || !selectedAccountId}
+              disabled={running || testingCreate || testingExistingGroup || !selectedAccountId}
               className="rounded-lg bg-orange px-4 py-2 text-sm font-semibold text-white hover:bg-orange-dark disabled:opacity-50"
             >
               {running ? "Выполнение..." : "Запустить диагностику"}
             </button>
           </div>
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-end gap-2 rounded-lg border border-gray-border bg-gray-card p-3">
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-navy-muted">
+              vkGroupId для проверки
+            </span>
+            <input
+              type="text"
+              value={existingGroupId}
+              onChange={(e) => setExistingGroupId(e.target.value)}
+              placeholder="123456789"
+              className="min-w-[180px] rounded-lg border border-gray-border bg-white px-3 py-2 text-sm text-navy"
+            />
+          </label>
+            <button
+              type="button"
+              onClick={handleTestExistingGroup}
+              disabled={testingExistingGroup || running || testingCreate || testingResolveVkUrl || !selectedAccountId}
+              className="rounded-lg border border-navy bg-navy/5 px-4 py-2 text-sm font-semibold text-navy hover:bg-navy/10 disabled:opacity-50"
+            >
+              {testingExistingGroup ? "Проверка..." : "Проверить существующую группу"}
+            </button>
+          </div>
+
+        <div className="mt-3 flex flex-wrap items-end gap-2 rounded-lg border border-gray-border bg-gray-card p-3">
+          <label className="block flex-1 min-w-[240px]">
+            <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-navy-muted">
+              vkUrl для распознавания
+            </span>
+            <input
+              type="text"
+              value={resolveVkUrlInput}
+              onChange={(e) => setResolveVkUrlInput(e.target.value)}
+              placeholder="https://vk.com/club123456789 или remont_astana"
+              className="w-full rounded-lg border border-gray-border bg-white px-3 py-2 text-sm text-navy"
+            />
+          </label>
+          <button
+            type="button"
+            onClick={handleTestResolveVkUrl}
+            disabled={testingResolveVkUrl || running || testingCreate || testingExistingGroup || !selectedAccountId}
+            className="rounded-lg border border-emerald-700 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-100 disabled:opacity-50"
+          >
+            {testingResolveVkUrl ? "Распознавание..." : "Распознать VK ссылку"}
+          </button>
         </div>
 
         {selectedAccount ? (
@@ -289,7 +515,7 @@ export default function VkApiDiagnosticsPanel() {
             <div className="rounded-lg border border-gray-border bg-gray-card px-3 py-2 text-sm">
               <div className="text-xs text-navy-muted">Методы</div>
               <div className="text-xs text-navy">
-                users.get · groups.get · groups.create · groups.edit · wall.post
+                users.get · groups.get · groups.create · groups.edit · groups.editAddress · wall.post
               </div>
             </div>
           </div>
@@ -297,10 +523,85 @@ export default function VkApiDiagnosticsPanel() {
 
         <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
           groups.create выполняется в тестовом режиме: создаётся группа с префиксом{" "}
-          <code>[DIAG-TEST]</code>, затем проверяются groups.edit и wall.post. После завершения
+          <code>[DIAG-TEST]</code>, затем проверяются groups.edit (title/description/website),
+          groups.editAddress и wall.post. После завершения
           система пытается удалить тестовую группу.
         </div>
       </section>
+
+      {resolveUrlTest ? (
+        <section className="space-y-3">
+          <div className="rounded-xl border border-gray-border bg-white px-4 py-3">
+            <div className="font-semibold text-navy">
+              Распознавание VK ссылки: {resolveUrlTest.accountName} ({resolveUrlTest.accountId})
+            </div>
+            <div className="text-sm text-navy-muted">{formatDateTime(resolveUrlTest.ranAt)}</div>
+          </div>
+          <div className="rounded-xl border border-gray-border bg-white px-4 py-4">
+            <dl className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <dt className="text-xs font-semibold uppercase tracking-wide text-navy-muted">vkUrl</dt>
+                <dd className="mt-1 font-mono text-sm text-navy">{resolveUrlTest.resolve.vkUrl || "—"}</dd>
+              </div>
+              <div>
+                <dt className="text-xs font-semibold uppercase tracking-wide text-navy-muted">screenName</dt>
+                <dd className="mt-1 font-mono text-sm text-navy">{resolveUrlTest.resolve.screenName || "—"}</dd>
+              </div>
+              <div>
+                <dt className="text-xs font-semibold uppercase tracking-wide text-navy-muted">type</dt>
+                <dd className="mt-1 font-mono text-sm text-navy">{resolveUrlTest.resolve.type}</dd>
+              </div>
+              <div>
+                <dt className="text-xs font-semibold uppercase tracking-wide text-navy-muted">vkGroupId</dt>
+                <dd
+                  className={`mt-1 font-mono text-sm ${
+                    resolveUrlTest.resolve.vkGroupId ? "text-emerald-700" : "text-red-700"
+                  }`}
+                >
+                  {resolveUrlTest.resolve.vkGroupId || "—"}
+                </dd>
+              </div>
+            </dl>
+            {resolveUrlTest.resolve.error ? (
+              <p className="mt-3 text-sm text-red-700">{resolveUrlTest.resolve.error}</p>
+            ) : null}
+            <div className="mt-4">
+              <h4 className="mb-1 text-xs font-semibold uppercase tracking-wide text-navy-muted">
+                utils.resolveScreenName
+              </h4>
+              <pre className="overflow-x-auto rounded-lg bg-gray-card p-3 text-xs text-navy">
+                {formatJson(resolveUrlTest.resolve.resolveScreenNameResponse ?? null)}
+              </pre>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {existingGroupTest ? (
+        <section className="space-y-3">
+          <div className="rounded-xl border border-gray-border bg-white px-4 py-3">
+            <div className="font-semibold text-navy">
+              Проверка группы {existingGroupTest.vkGroupId}: {existingGroupTest.accountName}
+            </div>
+            <div className="text-sm text-navy-muted">{formatDateTime(existingGroupTest.ranAt)}</div>
+          </div>
+          {existingGroupTest.steps.map((step) => (
+            <StepCard key={`${step.method}-${step.label}`} step={step} />
+          ))}
+        </section>
+      ) : null}
+
+      {groupsCreateTest ? (
+        <section className="space-y-3">
+          <div className="rounded-xl border border-gray-border bg-white px-4 py-3">
+            <div className="font-semibold text-navy">
+              Тест groups.create: {groupsCreateTest.accountName} ({groupsCreateTest.accountId})
+            </div>
+            <div className="text-sm text-navy-muted">{formatDateTime(groupsCreateTest.ranAt)}</div>
+          </div>
+          <StepCard step={groupsCreateTest.step} />
+        </section>
+      ) : null}
 
       {result ? (
         <section className="space-y-3">
@@ -322,11 +623,11 @@ export default function VkApiDiagnosticsPanel() {
             <StepCard key={step.method} step={step} />
           ))}
         </section>
-      ) : (
+      ) : !groupsCreateTest && !existingGroupTest && !resolveUrlTest ? (
         <div className="rounded-xl border border-gray-border bg-gray-card px-6 py-10 text-center text-navy-muted">
-          Выберите аккаунт и нажмите «Запустить диагностику».
+          Выберите аккаунт и запустите тест или полную диагностику.
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

@@ -5,13 +5,17 @@ import type { VkDashboardAuthStats } from "./vk-account-auth";
 export type { VkDashboardAuthStats };
 export interface VkDashboardOverall {
   total: number;
-  new: number;
-  in_progress: number;
-  created: number;
-  filled: number;
+  groupsCreated: number;
+  readyForWorker: number;
   posted: number;
   error: number;
   completionPercent: number;
+  /** @deprecated legacy breakdown */
+  new?: number;
+  in_progress?: number;
+  need_vk_url?: number;
+  created?: number;
+  filled?: number;
 }
 
 export interface VkDashboardGroupStats {

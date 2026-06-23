@@ -93,6 +93,32 @@ function escapeCsvField(value: string): string {
   return value;
 }
 
+export function pageToCsvRow(page: GeneratedPage): string {
+  return CSV_COLUMNS.map((col) => escapeCsvField(page[col])).join(",");
+}
+
+export function appendPagesToCsv(
+  newPages: GeneratedPage[],
+  outputPath?: string
+): number {
+  if (newPages.length === 0) {
+    return 0;
+  }
+
+  const filePath = outputPath ?? path.join(process.cwd(), "data", "pages.csv");
+  const rows = newPages.map(pageToCsvRow).join("\n") + "\n";
+
+  if (!fs.existsSync(filePath)) {
+    fs.writeFileSync(filePath, CSV_COLUMNS.join(",") + "\n" + rows, "utf-8");
+    return newPages.length;
+  }
+
+  const existing = fs.readFileSync(filePath, "utf-8");
+  const prefix = existing.endsWith("\n") ? "" : "\n";
+  fs.appendFileSync(filePath, prefix + rows, "utf-8");
+  return newPages.length;
+}
+
 export function pagesToCsv(pages: GeneratedPage[]): string {
   const header = CSV_COLUMNS.join(",");
   const rows = pages.map((page) =>

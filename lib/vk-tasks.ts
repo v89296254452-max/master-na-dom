@@ -4,6 +4,8 @@ import type { VkPlanRow } from "./vk-types";
 import type { VkTask, VkTaskStatus } from "./vk-task-types";
 import { DEFAULT_QUALITY_CHECK, normalizeQualityCheck } from "./vk-quality-check";
 import { generateVkContentPack, resolveContentPackFromFiles } from "./vk-content-pack-server";
+import { DEFAULT_VK_TASK_IMAGE_ASSETS, normalizeImageAssets } from "./vk-image-assets-types";
+import { DEFAULT_MANUAL_SETUP, normalizeManualSetup } from "./vk-manual-setup";
 import { loadVkPlanStrict } from "./vk-plan";
 
 const VK_TASKS_PATH = path.join(process.cwd(), "data", "vk-tasks.json");
@@ -17,6 +19,8 @@ function mapPlanStatus(status: string): VkTaskStatus {
 
   if (normalized === "new" || normalized === "pending") return "new";
   if (normalized === "in_progress" || normalized === "in-progress") return "in_progress";
+  if (normalized === "need_vk_url" || normalized === "need-vk-url") return "need_vk_url";
+  if (normalized === "ready_for_worker" || normalized === "ready-for-worker") return "ready_for_worker";
   if (normalized === "created") return "created";
   if (normalized === "filled") return "filled";
   if (normalized === "posted" || normalized === "done") return "posted";
@@ -54,8 +58,12 @@ export function planRowToTask(row: VkPlanRow, timestamp = nowIso()): VkTask {
     vkGroupId: "",
     assignedAccount: "",
     assignedAt: "",
+    manualCreated: false,
+    lastBindBatchId: "",
     qualityCheck: { ...DEFAULT_QUALITY_CHECK },
+    manualSetup: { ...DEFAULT_MANUAL_SETUP },
     contentPack: generateVkContentPack(contentPackInput),
+    imageAssets: { ...DEFAULT_VK_TASK_IMAGE_ASSETS },
     status: mapPlanStatus(row.status),
     createdAt: timestamp,
     updatedAt: timestamp,
@@ -95,8 +103,12 @@ function normalizeTask(raw: Partial<VkTask>): VkTask | null {
     vkGroupId: raw.vkGroupId ?? "",
     assignedAccount: raw.assignedAccount ?? "",
     assignedAt: raw.assignedAt ?? "",
+    manualCreated: raw.manualCreated === true,
+    lastBindBatchId: typeof raw.lastBindBatchId === "string" ? raw.lastBindBatchId : "",
     qualityCheck: normalizeQualityCheck(raw.qualityCheck),
+    manualSetup: normalizeManualSetup(raw.manualSetup),
     contentPack: resolveContentPackFromFiles(raw.contentPack, contentPackInput),
+    imageAssets: normalizeImageAssets(raw.imageAssets),
     status: mapPlanStatus(raw.status ?? "new"),
     createdAt: raw.createdAt ?? timestamp,
     updatedAt: raw.updatedAt ?? timestamp,
@@ -153,7 +165,17 @@ export function updateVkTask(
   patch: Partial<
     Pick<
       VkTask,
-      "vkUrl" | "vkGroupId" | "assignedAccount" | "assignedAt" | "status" | "qualityCheck" | "contentPack"
+      | "vkUrl"
+      | "vkGroupId"
+      | "assignedAccount"
+      | "assignedAt"
+      | "status"
+      | "qualityCheck"
+      | "manualSetup"
+      | "contentPack"
+      | "imageAssets"
+      | "manualCreated"
+      | "lastBindBatchId"
     >
   >
 ): VkTask | null {
@@ -164,7 +186,9 @@ export function updateVkTask(
     ...tasks[index],
     ...patch,
     qualityCheck: patch.qualityCheck ?? tasks[index].qualityCheck,
+    manualSetup: patch.manualSetup ?? tasks[index].manualSetup,
     contentPack: patch.contentPack ?? tasks[index].contentPack,
+    imageAssets: patch.imageAssets ?? tasks[index].imageAssets,
     updatedAt: nowIso(),
   };
 
@@ -191,12 +215,18 @@ export function bulkUpdateVkTasks(
     const id = item.id.trim();
     if (!id) continue;
 
-    const patch: Partial<Pick<VkTask, "vkUrl" | "vkGroupId" | "assignedAccount" | "status">> = {};
+    const patch: Partial<
+      Pick<VkTask, "vkUrl" | "vkGroupId" | "assignedAccount" | "status" | "manualCreated">
+    > = {};
 
     if (item.vkUrl !== undefined) patch.vkUrl = item.vkUrl;
     if (item.vkGroupId !== undefined) patch.vkGroupId = item.vkGroupId;
     if (item.assignedAccount !== undefined) patch.assignedAccount = item.assignedAccount;
     if (item.status !== undefined) patch.status = item.status;
+
+    if (patch.vkGroupId?.trim()) {
+      patch.manualCreated = true;
+    }
 
     if (Object.keys(patch).length === 0) continue;
 
@@ -232,7 +262,7 @@ export function takeVkTasks(
     }
 
     const patch: Partial<Pick<VkTask, "status" | "assignedAccount" | "assignedAt">> = {
-      status: "in_progress",
+      status: "need_vk_url",
       assignedAt,
     };
 

@@ -11,7 +11,13 @@
 import fs from "fs";
 import path from "path";
 import { executeMockJob } from "../lib/vk-automation-worker-mock";
-import { executeRealJob, formatVkError } from "../lib/vk-automation-worker-real";
+import {
+  executeRealJob,
+  formatVkError,
+  isWorkerNotReadyError,
+  isWorkerSkipError,
+} from "../lib/vk-automation-worker-real";
+import { extractGroupIdFromCreateResponse } from "../lib/vk-api-client";
 import type { VkAutomationAction } from "../lib/vk-automation-queue-types";
 
 function loadEnvFile(filename: string): void {
@@ -54,6 +60,9 @@ const MAX_ATTEMPTS = Math.max(1, Number(process.env.VK_WORKER_MAX_ATTEMPTS) || 3
 const SUPPORTED_ACTIONS: VkAutomationAction[] = [
   "login_account",
   "create_group",
+  "need_manual_create",
+  "need_manual_check",
+  "setup_group",
   "fill_description",
   "upload_avatar",
   "upload_cover",
@@ -108,6 +117,46 @@ function sleep(ms: number): Promise<void> {
 
 function isSupportedAction(value: string): value is VkAutomationAction {
   return (SUPPORTED_ACTIONS as readonly string[]).includes(value);
+}
+
+function extractGroupIdFromJobResult(result: Record<string, unknown>): string | null {
+  const directCandidates = [result.vkGroupId, result.groupId, result.id];
+
+  for (const candidate of directCandidates) {
+    if (typeof candidate === "number" && candidate > 0) {
+      return String(Math.floor(candidate));
+    }
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  const response = result.response;
+  const fromResponse = extractGroupIdFromCreateResponse(response);
+  if (fromResponse) {
+    return String(fromResponse);
+  }
+
+  const vkRawResponse = result.vkRawResponse;
+  if (vkRawResponse && typeof vkRawResponse === "object" && "response" in vkRawResponse) {
+    const fromRaw = extractGroupIdFromCreateResponse(
+      (vkRawResponse as { response?: unknown }).response
+    );
+    if (fromRaw) {
+      return String(fromRaw);
+    }
+  }
+
+  return null;
+}
+
+function validateCreateGroupResult(result: Record<string, unknown>): string | null {
+  const groupId = extractGroupIdFromJobResult(result);
+  if (groupId) {
+    return null;
+  }
+
+  return `create_group: VK response has no groupId/id. Full response: ${JSON.stringify(result)}`;
 }
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<FetchJsonResult<T>> {
@@ -172,7 +221,7 @@ async function claimNextJob(): Promise<ClaimResponse | null> {
 
 async function completeJob(
   jobId: string,
-  status: "success" | "failed",
+  status: "success" | "failed" | "skipped",
   result?: Record<string, unknown>,
   error?: string,
   options?: { retry?: boolean }
@@ -247,6 +296,43 @@ async function processOnce(): Promise<boolean> {
 
   try {
     const result = await executeJob(job);
+
+    if (result.skipped === true) {
+      const skipMessage = typeof result.message === "string" ? result.message : "Skipped";
+      const completed = await completeJob(job.id, "skipped", result, skipMessage);
+
+      log(
+        `SKIPPED job=${job.id} action=${job.action} taskId=${job.taskId} accountId=${job.accountId} message=${skipMessage}`
+      );
+
+      if (!completed) {
+        log(`WARN job=${job.id} skipped but PUT completion failed — check API URL`);
+      }
+
+      return true;
+    }
+
+    if (WORKER_MODE === "real" && job.action === "create_group") {
+      const createGroupError = validateCreateGroupResult(result);
+      if (createGroupError) {
+        log(`create_group missing groupId. Full VK response: ${JSON.stringify(result)}`);
+
+        const canRetry = job.attempts < MAX_ATTEMPTS;
+        const completed = await completeJob(job.id, "failed", result, createGroupError, {
+          retry: canRetry,
+        });
+
+        if (completed?.job?.status === "pending") {
+          log(`RETRY scheduled job=${job.id} action=${job.action} taskId=${job.taskId}`);
+        }
+
+        log(
+          `FAILED job=${job.id} action=${job.action} taskId=${job.taskId} accountId=${job.accountId} attempts=${job.attempts}/${MAX_ATTEMPTS} error=${createGroupError}${canRetry ? " retry=pending" : ""}`
+        );
+        return true;
+      }
+    }
+
     const completed = await completeJob(job.id, "success", result);
 
     if (!completed) {
@@ -260,6 +346,25 @@ async function processOnce(): Promise<boolean> {
 
     log(`SUCCESS job=${job.id} action=${job.action} taskId=${job.taskId} accountId=${job.accountId}`);
   } catch (error) {
+    if (isWorkerSkipError(error)) {
+      const completed = await completeJob(job.id, "skipped", error.result, error.message);
+      log(
+        `SKIPPED job=${job.id} action=${job.action} taskId=${job.taskId} accountId=${job.accountId} message=${error.message}`
+      );
+      if (!completed) {
+        log(`WARN job=${job.id} skipped but PUT completion failed — check API URL`);
+      }
+      return true;
+    }
+
+    if (isWorkerNotReadyError(error)) {
+      log(
+        `NOT_READY job=${job.id} action=${job.action} taskId=${job.taskId} accountId=${job.accountId} error=${error.message}`
+      );
+      await completeJob(job.id, "failed", undefined, error.message, { retry: false });
+      return true;
+    }
+
     const message = formatVkError(error);
     const canRetry = job.attempts < MAX_ATTEMPTS;
 

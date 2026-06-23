@@ -73,7 +73,7 @@ export async function POST(request: Request) {
         taskId: task.id,
         action: "assigned" as const,
         oldStatus: "new",
-        newStatus: "in_progress",
+        newStatus: "need_vk_url",
         assignedAccount: task.assignedAccount,
         vkUrl: task.vkUrl,
         vkGroupId: task.vkGroupId,

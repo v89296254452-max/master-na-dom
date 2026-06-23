@@ -55,7 +55,7 @@ function assignTaskToSlot(
   assignedAt: string
 ): VkTask | null {
   const updated = updateVkTask(tasks, task.id, {
-    status: "in_progress",
+    status: "need_vk_url",
     assignedAccount: slot.account.id,
     assignedAt,
   });
