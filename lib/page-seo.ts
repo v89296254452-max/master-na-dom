@@ -1,6 +1,7 @@
 import type { Page } from "./pages";
 import { getDistrictsList, getPhone, getServiceSlug } from "./pages";
 import { getSeoBlocks, type SeoBlock } from "./seo-content";
+import { BRAND } from "./service-templates";
 
 export interface PageSeoSections {
   uniqueText: { title: string; paragraphs: string[] };
@@ -47,7 +48,7 @@ type ExtraBuilder = (ctx: {
 
 const UNIQUE_EXTRA_PARAGRAPHS: ExtraBuilder[] = [
   (c) =>
-    `Служба «Сервислид» работает в ${c.cityPrep} и принимает заявки ежедневно. Мастер по ${c.serviceLower} выезжает в течение 30–60 минут — в центр, спальные районы и пригород. Диагностика бесплатна при выполнении работ, стоимость согласовывается до начала ремонта.`,
+    `Служба «${BRAND}» работает в ${c.cityPrep} и принимает заявки ежедневно. Мастер по ${c.serviceLower} выезжает в течение 30–60 минут — в центр, спальные районы и пригород. Диагностика бесплатна при выполнении работ, стоимость согласовывается до начала ремонта.`,
   (c) =>
     `Жители ${c.city} часто заказывают ${c.serviceLower} при первых признаках неисправности: это помогает избежать дорогостоящего ремонта и простоя техники. Наши специалисты приезжают с инструментом и типовыми запчастями, большинство проблем устраняют за один визит.`,
   (c) =>

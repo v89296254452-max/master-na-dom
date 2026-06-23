@@ -40,7 +40,7 @@ export interface GeneratedPage {
 export const DISTRICTS =
   "Центральный, Советский, Ленинский, Октябрьский, Железнодорожный, Промышленный";
 
-export const BRAND = "Сервислид";
+export const BRAND = "ПроМастер";
 
 function faqSet(serviceName: string, serviceLower: string) {
   return [

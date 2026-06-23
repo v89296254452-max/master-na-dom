@@ -8,7 +8,7 @@ export default function HomePage() {
     <main className="mx-auto max-w-3xl px-4 py-12">
       <header className="mb-10 text-center">
         <h1 className="text-3xl font-bold text-navy sm:text-4xl">
-          Master Leads — бытовые услуги
+          ПроМастер — бытовые услуги
         </h1>
         <p className="mt-3 text-lg text-navy-light">
           Вызов мастера на дом. Сантехник, электрик, ремонт техники.

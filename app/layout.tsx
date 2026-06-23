@@ -5,8 +5,15 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   metadataBase: new URL(getSiteUrl()),
-  title: "Master Leads — бытовые услуги",
+  title: "ПроМастер — бытовые услуги",
   description: "Вызов мастера на дом: сантехник, электрик, ремонт техники. Работаем по всем районам.",
+  openGraph: {
+    title: "ПроМастер — бытовые услуги",
+    description: "Вызов мастера на дом: сантехник, электрик, ремонт техники. Работаем по всем районам.",
+    siteName: "ПроМастер",
+    locale: "ru_RU",
+    type: "website",
+  },
   icons: {
     icon: [{ url: "/icon.png", type: "image/png" }],
     apple: [{ url: "/apple-icon.png", type: "image/png" }],
