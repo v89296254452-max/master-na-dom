@@ -10,7 +10,7 @@ export default function HomePage() {
         <h1 className="text-3xl font-bold text-navy sm:text-4xl">
           ПроМастер — бытовые услуги
         </h1>
-        <p className="mt-3 text-lg text-navy-light">
+        <p className="mt-4 text-navy-light">
           Вызов мастера на дом. Сантехник, электрик, ремонт техники.
         </p>
       </header>

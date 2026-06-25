@@ -1,19 +1,20 @@
 import SectionHeading from "./SectionHeading";
 
 interface SeoListSectionProps {
+  id?: string;
   title: string;
   intro?: string[];
   items?: string[];
 }
 
-export default function SeoListSection({ title, intro, items }: SeoListSectionProps) {
+export default function SeoListSection({ id, title, intro, items }: SeoListSectionProps) {
   const paragraphs = (intro ?? []).filter(Boolean);
   const listItems = (items ?? []).filter(Boolean);
 
   if (paragraphs.length === 0 && listItems.length === 0) return null;
 
   return (
-    <section className="rounded-2xl bg-gray-card border border-gray-border p-6 sm:p-8">
+    <section id={id} className="rounded-2xl bg-gray-card border border-gray-border p-6 sm:p-8 shadow-sm">
       <SectionHeading title={title} />
       {paragraphs.length > 0 && (
         <div className="mb-4 space-y-3 text-navy-light leading-relaxed">

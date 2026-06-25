@@ -1,67 +1,109 @@
-import { BENEFITS, getHeroSubtitle } from "@/lib/service-ui";
+import Link from "next/link";
 import type { Page } from "@/lib/pages";
+import type { PageVisual } from "@/lib/images";
+import { EXTENDED_BENEFITS, HERO_BENEFITS, HERO_STATS, WORKING_HOURS } from "@/lib/seo/constants";
+import { getHeroSubtitle } from "@/lib/service-ui";
+import BrandLogo from "./BrandLogo";
+import VisualImage from "./VisualImage";
 
 interface ServiceHeroProps {
   page: Page;
   phone: string;
   phoneHref: string;
+  logoSrc: string;
+  heroVisual: PageVisual;
 }
 
-export default function ServiceHero({ page, phone, phoneHref }: ServiceHeroProps) {
+const BENEFIT_ICONS: Record<string, string> = {
+  clock: "🕐",
+  bolt: "⚡",
+  shield: "🛡",
+};
+
+export default function ServiceHero({ page, phone, phoneHref, logoSrc, heroVisual }: ServiceHeroProps) {
   const subtitle = getHeroSubtitle(page);
 
   return (
-    <section className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-gray-card to-white border border-gray-border p-6 sm:p-8">
-      <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-orange/5" />
-      <div className="absolute -bottom-6 -left-6 h-24 w-24 rounded-full bg-navy/5" />
+    <section className="relative overflow-hidden rounded-3xl border border-gray-border bg-gradient-to-br from-navy via-navy-light to-navy text-white shadow-xl">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(249,115,22,0.15),transparent_50%)]" />
 
-      <div className="relative">
-        <p className="mb-2 text-sm font-medium text-orange">
-          Служба мастеров в {page.cityPrepositional || page.city || "городе"}
-        </p>
-        <h1 className="text-2xl font-bold leading-tight text-navy sm:text-3xl lg:text-4xl">
-          {page.h1 || `${page.service || "Услуга"} — выезд мастера`}
-        </h1>
-        <p className="mt-3 text-base text-navy-muted sm:text-lg">{subtitle}</p>
+      <div className="relative grid gap-8 p-6 sm:p-8 lg:grid-cols-[1fr_minmax(220px,280px)] lg:items-center">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-4">
+            <BrandLogo src={logoSrc} />
+            <div className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-sm backdrop-blur-sm">
+              <span className="text-orange">★</span>
+              <span className="font-semibold">{HERO_STATS.rating}</span>
+              <span className="text-white/70">· {HERO_STATS.orders} заявок</span>
+            </div>
+            <span className="rounded-full bg-orange px-3 py-1 text-xs font-bold lg:hidden">
+              Гарантия {HERO_STATS.guarantee}
+            </span>
+          </div>
 
-        <a
-          href={phoneHref}
-          className="mt-5 inline-block text-2xl font-bold text-navy sm:text-3xl"
-        >
-          {phone}
-        </a>
+          <p className="mt-4 text-sm font-medium text-orange">
+            {WORKING_HOURS.title} · {WORKING_HOURS.schedule}
+          </p>
 
-        <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+          <h1 className="mt-2 text-2xl font-bold leading-tight sm:text-3xl lg:text-4xl">
+            {page.h1 || `${page.service || "Услуга"} — выезд мастера`}
+          </h1>
+
+          <p className="mt-3 text-base text-white/80 sm:text-lg">{subtitle}</p>
+
+          <div className="mt-5 flex flex-wrap gap-3">
+            {HERO_BENEFITS.map((item) => (
+              <div
+                key={item.title}
+                className="flex items-center gap-2 rounded-xl bg-white/10 px-3 py-2 text-sm backdrop-blur-sm"
+              >
+                <span>{BENEFIT_ICONS[item.icon]}</span>
+                <span className="font-semibold">{item.title}</span>
+                <span className="text-white/60">{item.desc}</span>
+              </div>
+            ))}
+          </div>
+
           <a
             href={phoneHref}
-            className="inline-flex items-center justify-center rounded-xl bg-orange px-6 py-3.5 text-base font-semibold text-white shadow-sm transition-colors hover:bg-orange-dark"
+            className="mt-6 inline-block text-2xl font-bold tracking-tight transition-colors hover:text-orange sm:text-3xl lg:text-4xl"
           >
-            Позвонить
+            {phone}
           </a>
-          <a
-            href="#lead-form"
-            className="inline-flex items-center justify-center rounded-xl border-2 border-navy/15 bg-white px-6 py-3.5 text-base font-semibold text-navy transition-colors hover:border-navy/30 hover:bg-gray-card"
-          >
-            Оставить заявку
-          </a>
+
+          <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+            <a
+              href={phoneHref}
+              className="inline-flex items-center justify-center rounded-xl bg-orange px-8 py-4 text-base font-semibold text-white shadow-lg shadow-orange/25 transition-all hover:bg-orange-dark hover:shadow-orange/40"
+            >
+              Вызвать мастера
+            </a>
+            <Link
+              href="#lead-form"
+              className="inline-flex items-center justify-center rounded-xl border-2 border-white/25 bg-white/10 px-8 py-4 text-base font-semibold backdrop-blur-sm transition-colors hover:bg-white/20"
+            >
+              Оставить заявку
+            </Link>
+          </div>
+
+          <ul className="mt-8 grid gap-2 sm:grid-cols-2">
+            {EXTENDED_BENEFITS.slice(0, 4).map((item) => (
+              <li key={item} className="flex items-center gap-2 text-sm text-white/90">
+                <span className="text-orange">✓</span>
+                {item}
+              </li>
+            ))}
+          </ul>
         </div>
 
-        <ul className="mt-8 grid gap-3 sm:grid-cols-3">
-          {BENEFITS.map((item) => (
-            <li
-              key={item.title}
-              className="flex items-start gap-3 rounded-xl bg-white/80 p-4 border border-gray-border"
-            >
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-orange/10 text-orange">
-                ✓
-              </span>
-              <div>
-                <p className="font-semibold text-navy text-sm">{item.title}</p>
-                <p className="text-xs text-navy-muted mt-0.5">{item.desc}</p>
-              </div>
-            </li>
-          ))}
-        </ul>
+        <div className="relative mx-auto w-full max-w-[280px] lg:mx-0 lg:justify-self-end">
+          <div className="relative aspect-[4/5] overflow-hidden rounded-3xl border-2 border-white/20 shadow-2xl">
+            <VisualImage visual={heroVisual} variant="hero" priority />
+          </div>
+          <div className="absolute -bottom-3 -left-3 hidden rounded-xl bg-orange px-4 py-2 text-sm font-bold shadow-lg lg:block">
+            Гарантия {HERO_STATS.guarantee}
+          </div>
+        </div>
       </div>
     </section>
   );

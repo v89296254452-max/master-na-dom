@@ -16,8 +16,9 @@ html {
 }
 
 body {
-  background-color: #ffffff;
+  background-color: #f8fafc;
   color: var(--color-navy);
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
 }

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 60" fill="none">
+  <rect width="240" height="60" rx="12" fill="#1a2b4a"/>
+  <text x="24" y="40" fill="#ffffff" font-family="system-ui,sans-serif" font-size="28" font-weight="700">Про</text>
+  <text x="88" y="40" fill="#f97316" font-family="system-ui,sans-serif" font-size="28" font-weight="700">Мастер</text>
+</svg>

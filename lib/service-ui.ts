@@ -31,7 +31,7 @@ const ICON_CYCLE: ServiceCard["icon"][] = [
 export function getHeroSubtitle(page: Page): string {
   const service = page.service || "Услуга";
   const cityPrep = page.cityPrepositional || page.city || "городе";
-  return `${service} с выездом на дом в ${cityPrep}. Работаем ежедневно, принимаем срочные заявки.`;
+  return `${service} с выездом на дом в ${cityPrep}. Звонки принимаем 24/7, круглосуточно без выходных.`;
 }
 
 export function getServiceCards(page: Page): ServiceCard[] {

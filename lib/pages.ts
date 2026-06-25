@@ -30,6 +30,9 @@ export const FALLBACK_PHONE = "+7 (984) 333-32-49";
 
 const CSV_PATH = path.join(process.cwd(), "data", "pages.csv");
 
+let pagesCache: Page[] | null = null;
+let pagesBySlug: Map<string, Page> | null = null;
+
 function safeString(value: unknown): string {
   if (value === undefined || value === null) {
     return "";
@@ -81,6 +84,8 @@ function normalizePage(raw: Record<string, unknown>): Page {
 }
 
 function loadPages(): Page[] {
+  if (pagesCache) return pagesCache;
+
   const content = fs.readFileSync(CSV_PATH, "utf-8");
   const rows = parse(content, {
     columns: true,
@@ -88,7 +93,9 @@ function loadPages(): Page[] {
     trim: true,
   }) as Record<string, unknown>[];
 
-  return rows.map(normalizePage);
+  pagesCache = rows.map(normalizePage);
+  pagesBySlug = new Map(pagesCache.map((page) => [page.slug, page]));
+  return pagesCache;
 }
 
 export function getAllPages(): Page[] {
@@ -96,7 +103,8 @@ export function getAllPages(): Page[] {
 }
 
 export function getPageBySlug(slug: string): Page | undefined {
-  return loadPages().find((page) => page.slug === slug);
+  if (!pagesBySlug) loadPages();
+  return pagesBySlug?.get(slug);
 }
 
 export function getOtherServicesInCity(page: Page, limit?: number): Page[] {

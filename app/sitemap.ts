@@ -1,13 +1,15 @@
 import type { MetadataRoute } from "next";
 import { getAllPages } from "@/lib/pages";
+import { getAllProblems } from "@/lib/problem";
 import { getSiteUrl } from "@/lib/site";
 
-/** Sitemap читает CSV; обновляется раз в сутки вместе с ISR-страницами */
+/** Sitemap: коммерческие страницы + раздел типовых проблем */
 export const revalidate = 86400;
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const siteUrl = getSiteUrl();
   const pages = getAllPages();
+  const problems = getAllProblems();
 
   return [
     {
@@ -16,13 +18,25 @@ export default function sitemap(): MetadataRoute.Sitemap {
       changeFrequency: "weekly",
       priority: 1,
     },
+    {
+      url: `${siteUrl}/problem`,
+      lastModified: new Date(),
+      changeFrequency: "weekly",
+      priority: 0.7,
+    },
     ...pages
       .filter((page) => page.slug)
       .map((page) => ({
-      url: `${siteUrl}/${page.slug}`,
-      lastModified: new Date(),
+        url: `${siteUrl}/${page.slug}`,
+        lastModified: new Date(),
+        changeFrequency: "monthly" as const,
+        priority: 0.8,
+      })),
+    ...problems.map((problem) => ({
+      url: `${siteUrl}/problem/${problem.slug}`,
+      lastModified: new Date(problem.createdAt),
       changeFrequency: "monthly" as const,
-      priority: 0.8,
+      priority: 0.6,
     })),
   ];
 }
