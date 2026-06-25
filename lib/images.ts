@@ -25,8 +25,17 @@ export interface DetailVisuals {
   callMaster: PageVisual;
 }
 
-const IMAGE_EXTENSIONS = [".webp", ".jpg", ".jpeg", ".png"] as const;
 const IMAGE_EXT_PATTERN = /\.(webp|jpe?g|png)$/i;
+
+/**
+ * Реальные файлы в public/images/ (URL всегда /images/{category}/{file}).
+ * Если файла нет на диске — src будет null, VisualImage покажет CSS-placeholder.
+ */
+const CATEGORY_FILES: Record<"hero" | "work" | "details", readonly string[]> = {
+  hero: ["111.webp", "1111.webp"],
+  work: ["1.webp", "2.webp", "3.webp"],
+  details: [],
+};
 
 const PAGE_THEMES = [
   { gradientFrom: "#0ea5e9", gradientTo: "#0369a1", accent: "#38bdf8" },
@@ -47,37 +56,26 @@ interface CatalogItem {
 }
 
 const HERO_CATALOG: CatalogItem[] = [
-  { id: "master-tools", label: "Мастер с инструментом", icon: "🛠️", category: "hero" },
-  { id: "master-apartment", label: "Мастер в квартире", icon: "🏠", category: "hero" },
-  { id: "repair-process", label: "Процесс ремонта", icon: "⚙️", category: "hero" },
-  { id: "universal-specialist", label: "Универсальный специалист", icon: "👷", category: "hero" },
+  { id: "hero-111", label: "Мастер с инструментом", icon: "🛠️", category: "hero" },
+  { id: "hero-1111", label: "Мастер в квартире", icon: "🏠", category: "hero" },
 ];
 
 const WORK_CATALOG: CatalogItem[] = [
-  { id: "tools", label: "Инструменты", icon: "🔧", category: "work" },
-  { id: "bathroom", label: "Ванная", icon: "🚿", category: "work" },
-  { id: "kitchen", label: "Кухня", icon: "🍳", category: "work" },
-  { id: "appliances", label: "Техника", icon: "📦", category: "work" },
-  { id: "electrician", label: "Электрика", icon: "⚡", category: "work" },
-  { id: "hands", label: "Рабочие руки", icon: "🤲", category: "work" },
-  { id: "repair-work", label: "Процесс ремонта", icon: "🔩", category: "work" },
+  { id: "work-1", label: "Фото работ 1", icon: "🔧", category: "work" },
+  { id: "work-2", label: "Фото работ 2", icon: "🚿", category: "work" },
+  { id: "work-3", label: "Фото работ 3", icon: "🍳", category: "work" },
 ];
 
 const DETAILS_CATALOG: CatalogItem[] = [
   { id: "guarantee", label: "Гарантия", icon: "🛡️", category: "details" },
   { id: "call", label: "Звонок мастеру", icon: "📞", category: "details" },
-  { id: "checklist", label: "Чеклист", icon: "✅", category: "details" },
-  { id: "consultation", label: "Консультация", icon: "💬", category: "details" },
-  { id: "diagnostics", label: "Диагностика", icon: "🔍", category: "details" },
 ];
 
 const BRAND_CATALOG: CatalogItem[] = [
   { id: "logo-promaster", label: "ПроМастер", icon: "⭐", category: "brand" },
-  { id: "badge-trust", label: "Надёжный сервис", icon: "🏅", category: "brand" },
 ];
 
 const poolCache = new Map<ImageCategory, string[]>();
-const catalogIndexCache = new Map<ImageCategory, Map<string, string>>();
 
 function isImageFilename(name: string): boolean {
   if (!name || name.startsWith(".")) return false;
@@ -85,70 +83,25 @@ function isImageFilename(name: string): boolean {
   return IMAGE_EXT_PATTERN.test(name);
 }
 
-function listCategoryImages(category: ImageCategory): string[] {
-  if (poolCache.has(category)) {
-    return poolCache.get(category)!;
-  }
-
-  const pool: string[] = [];
-
-  try {
-    const dir = path.join(process.cwd(), "public", "images", category);
-    if (!fs.existsSync(dir)) {
-      poolCache.set(category, pool);
-      return pool;
-    }
-
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (!entry.isFile()) continue;
-      if (!isImageFilename(entry.name)) continue;
-
-      const fullPath = path.join(dir, entry.name);
-      try {
-        if (fs.statSync(fullPath).size <= 0) continue;
-      } catch {
-        continue;
-      }
-
-      pool.push(`/images/${category}/${entry.name}`);
-    }
-
-    pool.sort((a, b) => a.localeCompare(b, "en"));
-  } catch {
-    // ignore
-  }
-
-  poolCache.set(category, pool);
-  return pool;
+function numericBasename(name: string): number {
+  const match = path.basename(name).match(/^(\d+)/);
+  return match ? parseInt(match[1], 10) : Number.MAX_SAFE_INTEGER;
 }
 
-function catalogIndex(category: ImageCategory): Map<string, string> {
-  if (catalogIndexCache.has(category)) {
-    return catalogIndexCache.get(category)!;
-  }
-
-  const index = new Map<string, string>();
-  for (const filePath of listCategoryImages(category)) {
-    const basename = path.basename(filePath);
-    index.set(basename.toLowerCase(), basename);
-  }
-
-  catalogIndexCache.set(category, index);
-  return index;
-}
-
-export function getVisualSeed(page: Pick<Page, "slug">): number {
-  const slug = page.slug || "default";
-  let hash = 0;
-  for (let i = 0; i < slug.length; i++) {
-    hash = (hash * 31 + slug.charCodeAt(i)) | 0;
-  }
-  return Math.abs(hash);
+function sortImagePaths(paths: string[]): string[] {
+  return [...paths].sort((a, b) => {
+    const na = numericBasename(a);
+    const nb = numericBasename(b);
+    if (na !== nb) return na - nb;
+    return a.localeCompare(b, "en");
+  });
 }
 
 export function getSafeImage(relativePath: string): string | null {
   try {
     const normalized = relativePath.startsWith("/") ? relativePath : `/${relativePath}`;
+    if (!normalized.startsWith("/images/")) return null;
+
     const diskPath = path.join(process.cwd(), "public", normalized.replace(/^\//, ""));
 
     if (!fs.existsSync(diskPath)) return null;
@@ -162,52 +115,69 @@ export function getSafeImage(relativePath: string): string | null {
   }
 }
 
+function scanCategoryImages(category: ImageCategory): string[] {
+  const pool: string[] = [];
+
+  try {
+    const dir = path.join(process.cwd(), "public", "images", category);
+    if (!fs.existsSync(dir)) return pool;
+
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isFile() || !isImageFilename(entry.name)) continue;
+
+      const src = getSafeImage(`/images/${category}/${entry.name}`);
+      if (src) pool.push(src);
+    }
+  } catch {
+    // ignore
+  }
+
+  return sortImagePaths(pool);
+}
+
+function pathsFromKnownList(category: "hero" | "work" | "details"): string[] {
+  return CATEGORY_FILES[category]
+    .map((filename) => getSafeImage(`/images/${category}/${filename}`))
+    .filter((src): src is string => Boolean(src));
+}
+
+function listCategoryImages(category: ImageCategory): string[] {
+  if (poolCache.has(category)) {
+    return poolCache.get(category)!;
+  }
+
+  let pool: string[] = [];
+
+  if (category === "hero" || category === "work" || category === "details") {
+    pool = pathsFromKnownList(category);
+    if (pool.length === 0) {
+      pool = scanCategoryImages(category);
+    }
+  } else {
+    pool = scanCategoryImages(category);
+  }
+
+  poolCache.set(category, pool);
+  return pool;
+}
+
+export function getVisualSeed(page: Pick<Page, "slug">): number {
+  const slug = page.slug || "default";
+  let hash = 0;
+  for (let i = 0; i < slug.length; i++) {
+    hash = (hash * 31 + slug.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash);
+}
+
 function getPageTheme(page: Page) {
   return PAGE_THEMES[getVisualSeed(page) % PAGE_THEMES.length];
 }
 
-function resolveCatalogImage(category: ImageCategory, id: string): string | null {
-  const index = catalogIndex(category);
-
-  for (const ext of IMAGE_EXTENSIONS) {
-    const filename = index.get(`${id}${ext}`.toLowerCase());
-    if (filename) {
-      const src = `/images/${category}/${filename}`;
-      return getSafeImage(src);
-    }
-  }
-
-  const placeholderIndex = catalogIndex("placeholders");
-  for (const ext of IMAGE_EXTENSIONS) {
-    const filename = placeholderIndex.get(`${id}${ext}`.toLowerCase());
-    if (filename) {
-      const src = `/images/placeholders/${filename}`;
-      return getSafeImage(src);
-    }
-  }
-
-  return null;
-}
-
-function resolvePoolImage(category: ImageCategory, seed: number, salt: number): string | null {
+function pickPoolImage(category: ImageCategory, seed: number, offset: number): string | null {
   const pool = listCategoryImages(category);
   if (pool.length === 0) return null;
-
-  const index = (seed + salt) % pool.length;
-  const candidate = pool[index];
-  return getSafeImage(candidate);
-}
-
-function resolveImage(
-  category: ImageCategory,
-  catalogId: string,
-  page: Pick<Page, "slug">,
-  salt: number
-): string | null {
-  const byId = resolveCatalogImage(category, catalogId);
-  if (byId) return byId;
-
-  return resolvePoolImage(category, getVisualSeed(page), salt);
+  return pool[(seed + offset) % pool.length];
 }
 
 function toVisualMeta(item: CatalogItem, page: Page): VisualMeta {
@@ -225,67 +195,48 @@ function toPageVisual(
   item: CatalogItem,
   page: Page,
   altSuffix: string,
-  salt: number
+  src: string | null
 ): PageVisual {
-  const meta = toVisualMeta(item, page);
   const service = page.service || "Услуга";
   const cityPrep = page.cityPrepositional || page.city || "";
   return {
-    src: resolveImage(item.category, item.id, page, salt),
-    meta,
+    src,
+    meta: toVisualMeta(item, page),
     alt: `${item.label} — ${service} в ${cityPrep}. ${altSuffix}`.trim(),
   };
-}
-
-function pickCatalogItems(
-  catalog: CatalogItem[],
-  seed: number,
-  count: number,
-  salt = 0
-): CatalogItem[] {
-  const picked: CatalogItem[] = [];
-  const used = new Set<string>();
-
-  for (let i = 0; i < catalog.length && picked.length < count; i++) {
-    const item = catalog[(seed + salt + i * 5) % catalog.length];
-    if (!used.has(item.id)) {
-      used.add(item.id);
-      picked.push(item);
-    }
-  }
-
-  return picked;
 }
 
 function findCatalogItem(catalog: CatalogItem[], id: string): CatalogItem {
   return catalog.find((item) => item.id === id) ?? catalog[0];
 }
 
-function fallbackHero(page: Page): PageVisual {
-  const item = HERO_CATALOG[0];
-  return {
-    src: resolvePoolImage("hero", getVisualSeed(page), 0),
-    meta: toVisualMeta(item, page),
-    alt: `${page.service || "Услуга"} — выезд мастера`,
-  };
-}
-
 export function getHeroVisual(page: Page): PageVisual {
   try {
     const seed = getVisualSeed(page);
-    const item = pickCatalogItems(HERO_CATALOG, seed, 1, 0)[0];
-    return toPageVisual(item, page, "Выезд мастера на дом", 0);
+    const item = HERO_CATALOG[seed % HERO_CATALOG.length];
+    const src = pickPoolImage("hero", seed, 0);
+    return toPageVisual(item, page, "Выезд мастера на дом", src);
   } catch {
-    return fallbackHero(page);
+    const item = HERO_CATALOG[0];
+    return {
+      src: pickPoolImage("hero", 0, 0),
+      meta: toVisualMeta(item, page),
+      alt: `${page.service || "Услуга"} — выезд мастера`,
+    };
   }
 }
 
 export function getWorkGallery(page: Page): PageVisual[] {
   try {
     const seed = getVisualSeed(page);
-    return pickCatalogItems(WORK_CATALOG, seed, 6, 11).map((item, index) =>
-      toPageVisual(item, page, `Фото работ ${index + 1}`, 11 + index * 3)
-    );
+    const pool = listCategoryImages("work");
+    const slots = pool.length > 0 ? pool.length : WORK_CATALOG.length;
+
+    return Array.from({ length: slots }, (_, index) => {
+      const item = WORK_CATALOG[index % WORK_CATALOG.length];
+      const src = pool.length > 0 ? pool[(seed + index) % pool.length] : null;
+      return toPageVisual(item, page, `Фото работ ${index + 1}`, src);
+    });
   } catch {
     return [];
   }
@@ -293,18 +244,20 @@ export function getWorkGallery(page: Page): PageVisual[] {
 
 export function getDetailVisuals(page: Page): DetailVisuals {
   try {
+    const pool = listCategoryImages("details");
+
     return {
       guarantee: toPageVisual(
         findCatalogItem(DETAILS_CATALOG, "guarantee"),
         page,
         "Гарантия на работы",
-        101
+        pool[0] ?? null
       ),
       callMaster: toPageVisual(
         findCatalogItem(DETAILS_CATALOG, "call"),
         page,
         "Как вызвать мастера",
-        102
+        pool[1] ?? null
       ),
     };
   } catch {
@@ -316,6 +269,8 @@ export function getDetailVisuals(page: Page): DetailVisuals {
 
 export function getBrandAssets(): PageVisual[] {
   try {
+    const pool = listCategoryImages("brand");
+
     return BRAND_CATALOG.map((item, index) => {
       const meta: VisualMeta = {
         ...item,
@@ -324,7 +279,7 @@ export function getBrandAssets(): PageVisual[] {
         accent: "#f97316",
       };
       return {
-        src: resolveImage("brand", item.id, { slug: "brand" }, index),
+        src: pool[index] ?? pool[0] ?? null,
         meta,
         alt: item.label,
       };
