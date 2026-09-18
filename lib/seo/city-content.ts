@@ -17,11 +17,30 @@ function hash(s: string): number {
   return h >>> 0;
 }
 
+// Точечное расширение intro для 3 страниц с доказанным intent-разрывом
+// (реальный запрос формулируется иначе, чем H1/title страницы, но это тот
+// же коммерческий интент — не меняем H1/сущность страницы, только
+// закрываем альтернативную формулировку одной фразой в intro).
+// См. docs/SEO-GROWTH-WAVE-1.md, раздел 13; reports/seo-change-log.csv.
+const INTENT_VARIANT_CLAUSE: Record<string, string> = {
+  "remont-kondicionerov-tolyatti": " Если ищете мастера по кондиционерам — это тот самый адрес.",
+  "remont-holodilnikov-tomsk": " Если нужен мастер по ремонту холодильника — обращайтесь, работаем и с такими заявками.",
+  "remont-pmm-volzhskiy": " Часто эту услугу называют просто «ремонт посудомойки» — это то же самое, обращайтесь.",
+};
+
+// Климат правдоподобно влияет на саму услугу только там, где есть реальная
+// уличная/погодозависимая составляющая (наружный блок кондиционера, монтаж/
+// герметизация окон). Для остального бытового ремонта (техника, мастер на
+// час, клининг и т.п.) заявление «работаем с поправкой на климат» ничего не
+// добавляет и не относится к сути услуги — см. reports/low-value-local-content.csv.
+const CLIMATE_RELEVANT_SERVICES = new Set(["Ремонт кондиционеров", "Ремонт окон"]);
+
 /** Интро под H1 — вариативное, с опорой на реальный факт города (если есть). */
 export function buildCityIntro(service: string, city: string, cityPrep: string, seed: string): string {
   const f = getCityFacts(city);
   const svc = service.toLowerCase();
   const v = hash(seed) % 4;
+  const climateRelevant = CLIMATE_RELEVANT_SERVICES.has(service);
 
   // Фактические зацепки — только известное. ВАЖНО: русские падежи. Названия
   // районов и услуг склонять нельзя (данные в именительном), поэтому все
@@ -33,7 +52,7 @@ export function buildCityIntro(service: string, city: string, cityPrep: string, 
   }
   if (f?.housing) hooks.push(`Знаем местный жилфонд: ${f.housing.toLowerCase()}`);
   if (f?.water_hardness) hooks.push(`Учитываем местную воду — ${f.water_hardness.toLowerCase()}`);
-  if (f?.climate_note) hooks.push(`Работаем с поправкой на климат — ${f.climate_note.toLowerCase()}`);
+  if (f?.climate_note && climateRelevant) hooks.push(`Работаем с поправкой на климат — ${f.climate_note.toLowerCase()}`);
 
   const base = [
     `${service} на дом ${inCity(cityPrep)} — мастер приедет от 30 минут.`,
@@ -44,7 +63,8 @@ export function buildCityIntro(service: string, city: string, cityPrep: string, 
   void svc;
 
   const hook = hooks.length ? ` ${hooks[hash(seed + "h") % hooks.length]}.` : "";
-  return `${base}${hook} Диагностика бесплатно, оплата после работ.`;
+  const intentVariant = INTENT_VARIANT_CLAUSE[seed] ?? "";
+  return `${base}${hook} Диагностика бесплатно, оплата после работ.${intentVariant}`;
 }
 
 /**
@@ -57,6 +77,7 @@ export function buildCityFaqs(service: string, city: string, cityPrep: string): 
   if (!f) return [];
   const out: FaqItem[] = [];
   const svc = service.toLowerCase();
+  const climateRelevant = CLIMATE_RELEVANT_SERVICES.has(service);
 
   // Падежи: город подставляем только после «в» (cityPrep), названия районов —
   // в именительном, как в датасете. Иначе выходит «в какие районы Москве».
@@ -72,7 +93,7 @@ export function buildCityFaqs(service: string, city: string, cityPrep: string): 
       question: `Влияет ли вода ${inCity(cityPrep)} на работу техники?`,
       answer: `Да. Вода ${inCity(cityPrep)} ${f.water_hardness.toLowerCase()}, поэтому накипь на нагревательных элементах — частая причина поломок. Мастер проверяет это при диагностике и подскажет, как продлить срок службы техники.`,
     });
-  } else if (f.climate_note) {
+  } else if (f.climate_note && climateRelevant) {
     out.push({
       question: `Работаете ли ${inCity(cityPrep)} круглый год?`,
       answer: `Да, работаем круглосуточно и без выходных. Местный климат (${f.climate_note.toLowerCase()}) учитываем в работе — на выезд приезжаем в любую погоду.`,
