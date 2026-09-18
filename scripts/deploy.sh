@@ -6,7 +6,7 @@
 #     .git                     control repo (only used to fetch + create worktrees)
 #     releases/<timestamp>/    one checkout + build per release (git worktree)
 #     shared/                  persistent, NOT in git: .env.local, SQLite DBs, VK state,
-#                              user-generated images, node_modules-<lockhash>/
+#                              user-generated images, deps-<lockhash>/node_modules
 #     current -> releases/<timestamp>   (symlink, swapped atomically)
 #
 # Usage:
@@ -129,7 +129,12 @@ done
 
 # --- 3. Dependencies (cached by lockfile hash, lives in shared/) ------------
 LOCK_HASH="$(sha256sum "$NEW_RELEASE/package-lock.json" | cut -c1-12)"
-NM_DIR="$SHARED_DIR/node_modules-$LOCK_HASH"
+# IMPORTANT: the real path must contain a `/node_modules/` segment (deps-<hash>/node_modules).
+# Next's webpack decides "external package" by that segment; with a differently named
+# directory it bundles a second copy of React and prerender dies with
+# "Cannot read properties of null (reading 'useContext')".
+DEPS_DIR="$SHARED_DIR/deps-$LOCK_HASH"
+NM_DIR="$DEPS_DIR/node_modules"
 if [[ -d "$NM_DIR" ]]; then
   log "package-lock unchanged ($LOCK_HASH) - reusing $NM_DIR"
 else
@@ -137,6 +142,7 @@ else
   # devDependencies are required by `next build` (typescript, tailwind, ...).
   (cd "$NEW_RELEASE" && npm ci --include=dev --no-audit --no-fund > "$NEW_RELEASE/.deploy-install.log" 2>&1) \
     || die "npm ci failed, see $NEW_RELEASE/.deploy-install.log"
+  mkdir -p "$DEPS_DIR"
   mv "$NEW_RELEASE/node_modules" "$NM_DIR"
 fi
 ln -s "$NM_DIR" "$NEW_RELEASE/node_modules"
@@ -250,13 +256,13 @@ for r in "${OLD_RELEASES[@]:-}"; do
   log "pruning old release $r"
   git -C "$APP_ROOT" worktree remove --force "$RELEASES_DIR/$r" 2>/dev/null || rm -rf "$RELEASES_DIR/$r"
 done
-for nm in "$SHARED_DIR"/node_modules-*; do
-  [[ -d "$nm" ]] || continue
+for deps in "$SHARED_DIR"/deps-*; do
+  [[ -d "$deps" ]] || continue
   in_use=0
   for rel in "$RELEASES_DIR"/*; do
-    [[ "$(readlink -f "$rel/node_modules" 2>/dev/null)" == "$(readlink -f "$nm")" ]] && { in_use=1; break; }
+    [[ "$(readlink -f "$rel/node_modules" 2>/dev/null)" == "$(readlink -f "$deps/node_modules")" ]] && { in_use=1; break; }
   done
-  [[ "$in_use" == "0" ]] && { log "pruning unused $(basename "$nm")"; rm -rf "$nm"; }
+  [[ "$in_use" == "0" ]] && { log "pruning unused $(basename "$deps")"; rm -rf "$deps"; }
 done
 
 log "done. current -> $NEW_RELEASE"
