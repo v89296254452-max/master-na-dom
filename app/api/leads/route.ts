@@ -226,7 +226,8 @@ export async function POST(request: Request) {
       problem: lead.problem,
       city: lead.city,
       service: lead.service,
-      serviceSlug: lead.slug,
+      // slug страницы (klining-tula) — не slug услуги; чистый serviceSlug шлёт форма/попап.
+      serviceSlug: getString(body.serviceSlug) || lead.slug,
     }).catch((e) => ({
       sent: false,
       error: e instanceof Error ? e.message : "network",

@@ -2,9 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { formatRuPhone, isValidRuPhone } from "@/lib/phone-format";
 import { attributionPayload } from "@/lib/attribution";
 import { buildOfferTitle, buildOfferSubject, type OfferContext } from "@/lib/offer-copy";
+import { CALC_SERVICES, OFFER_CITIES, OFFER_SERVICE_NAMES } from "@/lib/offer-catalog";
 import {
   DISCOUNT_PERCENT,
   SHOW_DELAY_MS,
@@ -27,15 +29,18 @@ function track(event: string, params?: Record<string, unknown>) {
   }
 }
 
+type PageCtx = OfferContext & { slug?: string };
+
 /**
  * Данные текущей SEO-страницы для оффера — читаются из скрытого элемента
  * #pm-offer-data, который эмиттят сами страницы (page.tsx, BrandPageView.tsx,
  * uslugi/[service], goroda/[city]) из УЖЕ ИМЕЮЩИХСЯ структурированных полей
  * (page.service/serviceSlug/city/cityPrepositional). Тот же паттерн, что и
  * #pm-page-phone для номера телефона (см. SiteScripts.tsx). Если элемента
- * нет на странице (главная, статика) — оффер показывается в generic-виде.
+ * нет на странице (главная, статика) — оффер показывается в generic-виде, а
+ * недостающие город/услугу посетитель выбирает в самом попапе.
  */
-function readPageOfferData(): OfferContext & { slug?: string } {
+function readPageOfferData(): PageCtx {
   if (typeof document === "undefined") return {};
   const el = document.getElementById("pm-offer-data") as HTMLElement | null;
   if (!el) return {};
@@ -83,18 +88,32 @@ function fmtClock(ms: number): string {
 type Phase = "form" | "sending" | "success" | "error";
 
 export default function OfferPopup() {
+  const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [phase, setPhase] = useState<Phase>("form");
   const [phone, setPhone] = useState("");
   const [phoneError, setPhoneError] = useState<string | null>(null);
+  const [fieldError, setFieldError] = useState<string | null>(null);
   const [remainingMs, setRemainingMs] = useState(0);
   const [dateLabel, setDateLabel] = useState("");
+  // Выбор посетителя — только когда страница не сообщила город/услугу.
+  const [selCity, setSelCity] = useState("");
+  const [selService, setSelService] = useState("");
+  // Что реально ушло в заявке — для экрана «Заявка принята».
+  const [sent, setSent] = useState<{ city: string; service: string } | null>(null);
 
-  const ctxRef = useRef<OfferContext & { slug?: string }>({});
+  const ctxRef = useRef<PageCtx>({});
   const shownRef = useRef(false);
   const leadIdRef = useRef<string>("");
   const expiresAtRef = useRef<number>(0);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Контекст страницы должен быть актуальным при каждом переходе: layout с
+  // попапом не перемонтируется при клиентской навигации, и раньше город/услуга
+  // читались один раз на первой странице визита (часто — главной, без данных).
+  useEffect(() => {
+    ctxRef.current = readPageOfferData();
+  }, [pathname]);
 
   // Триггеры показа: таймер 15с (десктоп и мобильный — по требованию) ИЛИ
   // exit-intent на десктопе (курсор уходит за верхнюю границу viewport).
@@ -201,6 +220,12 @@ export default function OfferPopup() {
   }
 
   async function openPopup() {
+    // Перечитываем контекст именно в момент показа — посетитель мог уйти
+    // с первой страницы за 15 секунд.
+    ctxRef.current = readPageOfferData();
+    setSelCity("");
+    setSelService("");
+    setFieldError(null);
     setOpen(true);
     setPhase("form");
     leadIdRef.current = genLeadId();
@@ -237,6 +262,20 @@ export default function OfferPopup() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (phase === "sending") return; // защита от двойного сабмита
+
+    // Актуализируем контекст на момент отправки (страница могла смениться).
+    const freshCtx = readPageOfferData();
+    if (freshCtx.city || freshCtx.service) ctxRef.current = freshCtx;
+    const ctx = ctxRef.current;
+
+    const city = ctx.city || selCity;
+    const service = ctx.service || selService;
+    if (!service || !city) {
+      setFieldError(!service ? "Выберите услугу" : "Выберите город");
+      return;
+    }
+    setFieldError(null);
+
     if (!isValidRuPhone(phone)) {
       setPhoneError("Введите корректный номер телефона");
       return;
@@ -244,14 +283,18 @@ export default function OfferPopup() {
     setPhoneError(null);
     setPhase("sending");
 
-    const ctx = ctxRef.current;
+    const serviceSlug = ctx.serviceSlug || CALC_SERVICES.find((s) => s.name === service)?.slug || "";
+    const pageSlug = ctx.slug || location.pathname.replace(/^\/+|\/+$/g, "").slice(0, 120);
     const attr = attributionPayload();
-    track("offer_submit", { service: ctx.serviceSlug || ctx.service, city: ctx.city, discount: DISCOUNT_PERCENT });
+    track("offer_submit", { service: serviceSlug || service, city, discount: DISCOUNT_PERCENT });
 
+    // Партнёрская CRM отклоняла заявки попапа (HTTP 500) — единственное отличие
+    // от принимаемых форм было в имени и спецсимволах заметки. Имя — то же, что
+    // у CallForm; пометка про скидку идёт простым текстом без «%» и скобок.
     const noteParts = [
-      `Заявка со скидкой ${DISCOUNT_PERCENT}% (popup-виджет).`,
+      `Заявка со скидкой ${DISCOUNT_PERCENT} процентов, попап-виджет.`,
       `ID: ${leadIdRef.current}.`,
-      `Оффер действует до 23:59 (МСК) ${dateLabel || ""}.`.trim(),
+      `Оффер действует до 23:59 МСК ${dateLabel || ""}.`.replace(/\s+\./, "."),
     ];
 
     try {
@@ -259,12 +302,13 @@ export default function OfferPopup() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: "Заявка со скидкой",
+          name: "Заявка с сайта",
           phone,
           problem: noteParts.join(" "),
-          city: ctx.city || "",
-          service: ctx.service || "",
-          slug: ctx.slug || "",
+          city,
+          service,
+          serviceSlug,
+          slug: pageSlug,
           source: attr.utmSource || "offer_popup",
           ...attr,
         }),
@@ -274,20 +318,29 @@ export default function OfferPopup() {
 
       writeMs(STORAGE_KEYS.submittedUntil, Date.now() + SUBMITTED_COOLDOWN_DAYS * 86_400_000);
       if (tickRef.current) clearInterval(tickRef.current);
+      setSent({ city, service });
       setPhase("success");
-      track("offer_success", { service: ctx.serviceSlug || ctx.service, city: ctx.city, discount: DISCOUNT_PERCENT });
+      track("offer_success", { service: serviceSlug || service, city, discount: DISCOUNT_PERCENT });
       track("lead_submit");
     } catch {
       setPhase("error");
-      track("offer_error", { service: ctx.serviceSlug || ctx.service, city: ctx.city });
+      track("offer_error", { service: serviceSlug || service, city });
     }
   }
 
   if (!open) return null;
 
   const ctx = ctxRef.current;
-  const title = buildOfferTitle(ctx, DISCOUNT_PERCENT);
-  const subject = buildOfferSubject(ctx);
+  const needCity = !ctx.city;
+  const needService = !ctx.service;
+  // Заголовок строим по выбранной услуге, если страница её не знает.
+  const titleCtx: OfferContext = {
+    ...ctx,
+    service: ctx.service || selService || undefined,
+    serviceSlug: ctx.serviceSlug || CALC_SERVICES.find((s) => s.name === selService)?.slug,
+  };
+  const title = buildOfferTitle(titleCtx, DISCOUNT_PERCENT);
+  const subject = buildOfferSubject(titleCtx);
 
   return (
     <div
@@ -313,11 +366,11 @@ export default function OfferPopup() {
             <h3 className="offer-pop__title">Заявка принята</h3>
             <p className="offer-pop__lead">Скидка {DISCOUNT_PERCENT}% закреплена за вами.</p>
             <p className="offer-pop__muted">
-              Мы передали заявку мастеру по услуге: <b>{subject}</b>
-              {ctx.city ? (
+              Мы передали заявку мастеру по услуге: <b>{sent?.service || subject}</b>
+              {sent?.city ? (
                 <>
                   <br />
-                  Город: <b>{ctx.city}</b>
+                  Город: <b>{sent.city}</b>
                 </>
               ) : null}
             </p>
@@ -335,12 +388,65 @@ export default function OfferPopup() {
               <span className="offer-pop__timer-clock tnum">{fmtClock(remainingMs)}</span>
             </div>
             <p className="offer-pop__lead">
-              Оставьте номер телефона — подберём специалиста под вашу задачу и закрепим скидку {DISCOUNT_PERCENT}%.
+              {needCity || needService
+                ? `Выберите ${needService && needCity ? "услугу и город" : needService ? "услугу" : "город"} и оставьте номер телефона — закрепим скидку ${DISCOUNT_PERCENT}%.`
+                : `Оставьте номер телефона — подберём специалиста под вашу задачу и закрепим скидку ${DISCOUNT_PERCENT}%.`}
             </p>
 
             {phase === "error" && (
               <div className="offer-pop__error-banner">Не удалось отправить заявку. Попробуйте ещё раз.</div>
             )}
+
+            {needService && (
+              <div className="field">
+                <select
+                  name="service"
+                  required
+                  aria-label="Услуга"
+                  disabled={phase === "sending"}
+                  value={selService}
+                  onChange={(e) => {
+                    setSelService(e.target.value);
+                    if (fieldError) setFieldError(null);
+                  }}
+                >
+                  <option value="" disabled>
+                    Выберите услугу
+                  </option>
+                  {OFFER_SERVICE_NAMES.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {needCity && (
+              <div className="field">
+                <select
+                  name="city"
+                  required
+                  aria-label="Город"
+                  disabled={phase === "sending"}
+                  value={selCity}
+                  onChange={(e) => {
+                    setSelCity(e.target.value);
+                    if (fieldError) setFieldError(null);
+                  }}
+                >
+                  <option value="" disabled>
+                    Выберите город
+                  </option>
+                  {OFFER_CITIES.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {fieldError && <p className="offer-pop__field-error">{fieldError}</p>}
 
             <div className="field">
               <input

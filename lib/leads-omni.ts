@@ -301,14 +301,23 @@ export async function sendLeadToOmni(input: OmniLeadInput): Promise<OmniLeadResu
       },
       body: JSON.stringify(payload),
     });
-    const json = (await res.json().catch(() => ({}))) as { order_id?: string; message?: string };
+    const raw = await res.text().catch(() => "");
+    let json: { order_id?: string; message?: string } = {};
+    try {
+      json = JSON.parse(raw) as typeof json;
+    } catch {
+      /* не JSON — оставим сырой фрагмент ниже */
+    }
     return {
       sent: res.status === 201,
       status: res.status,
       orderId: json.order_id,
       categoryId: category.id,
       departmentId,
-      error: res.status !== 201 ? json.message || `HTTP ${res.status}` : undefined,
+      error:
+        res.status !== 201
+          ? `${json.message || `HTTP ${res.status}`}${res.status >= 500 ? ` | ${raw.slice(0, 200)}` : ""}`
+          : undefined,
     };
   } catch (e) {
     return {
