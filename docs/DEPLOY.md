@@ -15,7 +15,7 @@ GitHub Actions ── verify (npm ci + tsc) ── deploy ── ssh root@VPS "d
                                             scripts/deploy.sh (из того же коммита)
                                               1. git worktree → releases/<время>/
                                               2. shared/* (БД, .env.local, картинки) → симлинки
-                                              3. npm ci (кэш по хешу lock-файла в shared/node_modules-*)
+                                              3. npm ci (кэш по хешу lock-файла в shared/deps-*)
                                               4. next build В НОВОЙ папке (боевой процесс не затронут)
                                               5. tsc + запуск на временном порту 3005 + healthcheck
                                               6. атомарная смена симлинка current → pm2 restart
@@ -28,7 +28,7 @@ GitHub Actions ── verify (npm ci + tsc) ── deploy ── ssh root@VPS "d
 |---|---|
 | `current` → `releases/<ts>` | то, что сейчас обслуживает PM2 (cwd процесса) |
 | `releases/` | последние 3 релиза (`.release-sha` внутри — какой коммит) |
-| `shared/` | всё, чего нет в git: `.env.local`, `data/*.db`, VK-состояние, `public/vk-assets`, `public/dzen-images`, `node_modules-<hash>` |
+| `shared/` | всё, чего нет в git: `.env.local`, `data/*.db`, VK-состояние, `public/vk-assets`, `public/dzen-images`, `deps-<hash>/node_modules` |
 | `.git` | «контрольный» репозиторий, только `fetch` и `worktree` |
 | остальное в корне | старое боевое дерево (до переезда). Пока `shared/*` — симлинки на него, **не удалять** |
 
