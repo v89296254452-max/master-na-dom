@@ -12,7 +12,9 @@ node scripts/guard-public-images.mjs
 # или она старше JSON-источников, пересобираем ДО старта. Иначе lib/ai-content.ts
 # ушёл бы в JSON-fallback (риск OOM на 228МБ / отсутствие бренд-контента).
 # Собирает только основной инстанс (:3000) — чтобы 2-й (:3001) не гонялся за БД.
-if [ "$PORT" = "3000" ]; then
+# В релизной схеме (scripts/deploy.sh) БД лежит в shared/, а исходные JSON в свежем
+# checkout всегда «новее» БД — авто-пересборка затёрла бы её. Только явно: AI_DB_AUTOBUILD=1.
+if [ "$PORT" = "3000" ] && [ "${AI_DB_AUTOBUILD:-0}" = "1" ]; then
   DB=data/ai-content.db
   NEEDS_BUILD=0
   if [ ! -f "$DB" ]; then

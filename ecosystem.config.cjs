@@ -1,24 +1,28 @@
-/** PM2 production config — 2 инстанса Next за nginx upstream (оба ядра).
- *  master-na-dom → :3000 (собирает контент-БД при старте), master-na-dom-2 → :3001. */
-const base = {
-  cwd: "/var/www/master-na-dom",
-  script: "scripts/start-prod.sh",
-  interpreter: "bash",
-  max_memory_restart: "1G",
-  autorestart: true,
-  max_restarts: 20,
-  min_uptime: "30s",
-  restart_delay: 5000,
-  exp_backoff_restart_delay: 200,
-  kill_timeout: 15000,
-  listen_timeout: 30000,
-  merge_logs: true,
-  time: true,
-};
-
+/**
+ * PM2 production config.
+ *
+ * cwd is the `current` symlink of the release layout (see scripts/deploy.sh):
+ * every restart resolves it to the release that is live at that moment.
+ * Single instance on :3000 behind nginx (nginx upstream has only 127.0.0.1:3000).
+ */
 module.exports = {
   apps: [
-    { ...base, name: "master-na-dom", env: { NODE_ENV: "production", PORT: "3000" } },
-    { ...base, name: "master-na-dom-2", env: { NODE_ENV: "production", PORT: "3001" } },
+    {
+      name: "master-na-dom",
+      cwd: "/var/www/master-na-dom/current",
+      script: "scripts/start-prod.sh",
+      interpreter: "bash",
+      env: { NODE_ENV: "production", PORT: "3000" },
+      max_memory_restart: "900M",
+      autorestart: true,
+      max_restarts: 20,
+      min_uptime: "30s",
+      restart_delay: 5000,
+      exp_backoff_restart_delay: 200,
+      kill_timeout: 15000,
+      listen_timeout: 30000,
+      merge_logs: true,
+      time: true,
+    },
   ],
 };
