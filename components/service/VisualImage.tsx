@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import type { PageVisual } from "@/lib/images";
 
 interface VisualImageProps {
@@ -64,11 +65,12 @@ function Placeholder({
   );
 }
 
-/** Без next/image: native img с fallback на CSS-placeholder */
+/** next/image (AVIF/WebP, resize) с fallback на CSS-placeholder */
 export default function VisualImage({
   visual,
   variant = "gallery",
   priority = false,
+  sizes,
   className = "object-cover",
 }: VisualImageProps) {
   const [failed, setFailed] = useState(false);
@@ -81,15 +83,22 @@ export default function VisualImage({
     return <Placeholder visual={visual} variant={variant} />;
   }
 
+  const defaultSizes =
+    variant === "hero"
+      ? "(max-width: 1024px) 100vw, 300px"
+      : variant === "detail"
+        ? "(max-width: 640px) 50vw, 200px"
+        : "(max-width: 640px) 100vw, 350px";
+
   return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
+    <Image
       src={visual.src}
       alt={visual.alt}
-      loading={priority ? "eager" : "lazy"}
-      decoding="async"
+      fill
+      priority={priority}
+      sizes={sizes ?? defaultSizes}
       onError={() => setFailed(true)}
-      className={`absolute inset-0 h-full w-full ${className}`}
+      className={className}
     />
   );
 }

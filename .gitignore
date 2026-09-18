@@ -13,6 +13,7 @@
 
 # next.js
 /.next/
+/.next-dev/
 /out/
 
 # production
@@ -35,3 +36,57 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# --- added for prod safety snapshot 2026-09-16 (see SEO_AUDIT_2026.md) ---
+data/ai-content.json
+data/ai-content.brand.json
+data/ai-content.money.bak.json
+data/ai-content.json.bak-*
+data/vk-tasks.json
+data/vk-tasks.json.bak-*
+data/vk-plan.csv
+data/dzen-queue.csv
+data/leads.db-wal
+data/leads.db-shm
+data/vk-automation/*.db-wal
+data/vk-automation/*.db-shm
+*.bak
+*.bak-*
+*.badcopy
+*.orig.*
+gen-brand.log
+failures.json
+xlsx-sheets.json
+xlsx-summary.txt
+server-3101.log
+build.log
+*.log
+
+# generated SEO registry (large, reproducible via scripts/seo/build-registry.ts)
+reports/seo-pages.csv
+reports/seo-pages.json
+
+
+# --- runtime state / secrets / databases: NEVER commit (live in shared/ on the server) ---
+/data/*.db
+/data/*.db-shm
+/data/*.db-wal
+/data/*.db.backup-*
+/data/vk-*.json
+/data/vk-plan.csv
+/data/vk-automation/
+/data/recrawl-cursor.json
+/data/ai-content.json
+/data/ai-content.brand.json
+/public/dzen-images/
+/public/vk-assets/
+/public/images/promaster/
+/scripts/ssh-*.sh
+/releases/
+/shared/
+/current
+# non-ASCII working dirs of the VK automation tool (accounts, proxies, browser profiles)
+/ДМ1/
+/╨Ф╨Ь1/
+*.zpprofile
+*.zp

@@ -5,12 +5,6 @@ export const WORKING_HOURS = {
   arrival: "Выезд от 30 минут",
 };
 
-export const HERO_STATS = {
-  rating: "4.9",
-  orders: "15000+",
-  guarantee: "до 12 мес.",
-};
-
 export const EXTENDED_BENEFITS = [
   "Звонки принимаем 24/7",
   "Круглосуточно, без выходных",
@@ -18,19 +12,6 @@ export const EXTENDED_BENEFITS = [
   "Гарантия до 12 месяцев",
   "Оригинальные и совместимые запчасти",
   "Оплата после проверки",
-];
-
-export const HERO_BENEFITS = [
-  { icon: "clock", title: "24/7", desc: "Круглосуточно" },
-  { icon: "bolt", title: "От 30 мин", desc: "Выезд мастера" },
-  { icon: "shield", title: "12 месяцев", desc: "Гарантия" },
-];
-
-export const TRUST_STATS = [
-  { value: "12+", label: "лет опыта" },
-  { value: "15000+", label: "заявок выполнено" },
-  { value: "3900+", label: "населённых пунктов" },
-  { value: "98%", label: "довольных клиентов" },
 ];
 
 export const REPAIR_STEPS = [
@@ -51,25 +32,3 @@ export const REPAIR_STEPS = [
   },
 ];
 
-export const WHY_CHOOSE_US = [
-  {
-    icon: "shield" as const,
-    title: "Гарантия до 12 месяцев",
-    desc: "Официальная гарантия на все виды работ и установленные запчасти",
-  },
-  {
-    icon: "clock" as const,
-    title: "Быстрый выезд",
-    desc: "Мастер приезжает в течение 30–60 минут по всему городу",
-  },
-  {
-    icon: "star" as const,
-    title: "Опытные специалисты",
-    desc: "Сертифицированные мастера с опытом от 5 лет",
-  },
-  {
-    icon: "wallet" as const,
-    title: "Честные цены",
-    desc: "Стоимость согласовывается до начала ремонта, без скрытых доплат",
-  },
-];

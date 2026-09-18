@@ -30,10 +30,6 @@ const APPLIANCE_SLUGS = new Set([
   "remont-pmm",
   "remont-varochnyh-panelej",
   "remont-duhovyh-shkafov",
-  "remont-parovyh-shkafov",
-  "remont-vinnyh-shkafov",
-  "remont-gladilnyh-sistem",
-  "remont-massazhnyh-kresel",
 ]);
 
 export function isApplianceService(serviceSlug: string): boolean {

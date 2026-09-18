@@ -15,10 +15,9 @@ const BT_SLUGS = new Set([
   "remont-varochnyh-panelej",
   "remont-stiralnyh-mashin",
   "remont-duhovyh-shkafov",
-  "remont-parovyh-shkafov",
-  "remont-vinnyh-shkafov",
-  "remont-gladilnyh-sistem",
-  "remont-massazhnyh-kresel",
+  // Убраны услуги без реальных страниц (источник 404-ссылок в Dzen/VK):
+  // remont-parovyh-shkafov, remont-vinnyh-shkafov, remont-gladilnyh-sistem,
+  // remont-massazhnyh-kresel — этих страниц нет в pages.csv.
 ]);
 
 const MNCH_SLUGS = new Set([
@@ -26,7 +25,9 @@ const MNCH_SLUGS = new Set([
   "elektrik",
   "remont-okon",
   "master-na-chas",
-  "domashniy-remont",
+  "dezinfekciya",
+  "klining",
+  "sborka-mebeli",
 ]);
 
 export function getPageSiteUrl(page: Pick<Page, "slug">): string {

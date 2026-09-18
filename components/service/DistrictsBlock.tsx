@@ -14,22 +14,24 @@ export default function DistrictsBlock({ cityPrepositional, districts }: Distric
   const cityLabel = cityPrepositional || "городе";
 
   return (
-    <section id="districts" className="rounded-2xl bg-gray-card border border-gray-border p-6 sm:p-8">
-      <SectionHeading
-        title={`Работаем во всех районах ${cityLabel}`}
-        subtitle="Мастер выезжает в любую точку города"
-      />
-      <div className="flex flex-wrap gap-2">
-        {items.map((district) => (
-          <Link
-            key={district.name}
-            id={district.href?.includes("#") ? district.href.split("#")[1] : undefined}
-            href={district.href}
-            className="rounded-full bg-white border border-gray-border px-4 py-2 text-sm font-medium text-navy hover:border-orange hover:text-orange transition-colors"
-          >
-            {district.name}
-          </Link>
-        ))}
+    <section id="districts" className="bg-bg px-6 py-10">
+      <div className="mx-auto max-w-[1100px]">
+        <SectionHeading
+          title={`Работаем во всех районах ${cityLabel}`}
+          subtitle="Мастер выезжает в любую точку города"
+        />
+        <div className="flex flex-wrap gap-2">
+          {items.map((district) => (
+            <Link
+              key={district.name}
+              id={district.href?.includes("#") ? district.href.split("#")[1] : undefined}
+              href={district.href}
+              className="rounded-full border border-accent/20 bg-accent-light px-3.5 py-1.5 text-sm font-medium text-accent transition-colors hover:bg-accent hover:text-white"
+            >
+              {district.name}
+            </Link>
+          ))}
+        </div>
       </div>
     </section>
   );

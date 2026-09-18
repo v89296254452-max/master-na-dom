@@ -1,4 +1,5 @@
 import type { Page } from "../pages";
+import { buildCityFaqs } from "./city-content";
 import { getServiceSlug } from "../pages";
 import { getSeoVars, resolveText, type SeoVars } from "./vars";
 
@@ -120,11 +121,12 @@ const APPLIANCE_SLUGS = new Set([
   "remont-pmm",
   "remont-varochnyh-panelej",
   "remont-duhovyh-shkafov",
-  "remont-parovyh-shkafov",
-  "remont-vinnyh-shkafov",
-  "remont-gladilnyh-sistem",
-  "remont-massazhnyh-kresel",
 ]);
+
+/** Сколько FAQ реально показывается на странице. FAQPage-разметка обязана
+ *  совпадать с ВИДИМЫМ контентом — иначе rich-сниппет отклоняют. Одна константа
+ *  для рендера и для schema, чтобы они не разъезжались. */
+export const VISIBLE_FAQ_LIMIT = 6;
 
 export function getExtendedFaqs(page: Page): FaqItem[] {
   const vars = getSeoVars(page);
@@ -136,6 +138,17 @@ export function getExtendedFaqs(page: Page): FaqItem[] {
   const all = [...BASE_FAQS, ...appliance, ...specific];
   const seen = new Set<string>();
   const result: FaqItem[] = [];
+
+  // Городские вопросы — ПЕРВЫМИ: попадают в видимые VISIBLE_FAQ_LIMIT, а значит
+  // и в FAQPage-разметку (она берёт тот же срез). Строятся из реальных фактов
+  // города и уже готовы (FaqItem), поэтому добавляются после резолва шаблонов.
+  for (const item of buildCityFaqs(page.service || "", page.city || "", page.cityPrepositional || page.city || "")) {
+    const key = item.question.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(item);
+    }
+  }
 
   for (const def of all) {
     const item = faqs([def], vars)[0];

@@ -70,26 +70,32 @@ export function guardPublicImages(cwd = process.cwd()) {
 }
 
 function cleanNext(cwd = process.cwd()) {
-  const dir = path.join(cwd, ".next");
-  if (!fs.existsSync(dir)) return false;
+  let removed = false;
+  for (const name of [".next", ".next-dev"]) {
+    const dir = path.join(cwd, name);
+    if (!fs.existsSync(dir)) continue;
 
-  for (let attempt = 1; attempt <= 5; attempt++) {
-    try {
-      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-      return true;
-    } catch {
-      if (attempt === 5) throw new Error("Could not remove .next — stop all node.exe first");
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      try {
+        fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+        removed = true;
+        break;
+      } catch {
+        if (attempt === 5) throw new Error(`Could not remove ${name} — stop this project's next processes first`);
+      }
     }
   }
-
-  return false;
+  return removed;
 }
 
 function killOtherNodeProcesses() {
+  // Только процессы ЭТОГО репозитория. Глобальный pkill/Stop-Process node
+  // убивал бы чужие next-проекты на той же машине.
+  const marker = path.basename(process.cwd());
   if (process.platform === "win32") {
     try {
       execSync(
-        `powershell -NoProfile -Command "Get-Process node -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne ${process.pid} } | Stop-Process -Force"`,
+        `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"Name='node.exe'\\" | Where-Object { $_.CommandLine -like '*${marker}*' -and $_.ProcessId -ne ${process.pid} } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"`,
         { stdio: "ignore" }
       );
     } catch {
@@ -98,7 +104,7 @@ function killOtherNodeProcesses() {
     return;
   }
 
-  spawnSync("pkill", ["-f", "next"], { stdio: "ignore" });
+  spawnSync("pkill", ["-f", marker], { stdio: "ignore" });
 }
 
 function main() {

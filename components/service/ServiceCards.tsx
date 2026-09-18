@@ -46,24 +46,26 @@ export default function ServiceCards({ service, cards }: ServiceCardsProps) {
   const serviceLabel = (service || "услуги").toLowerCase();
 
   return (
-    <section className="rounded-2xl bg-gray-card border border-gray-border p-6 sm:p-8">
-      <SectionHeading
-        title={`Услуги ${serviceLabel}`}
-        subtitle="Выполняем работы любой сложности на дому"
-      />
-      <ul className="grid gap-3 sm:grid-cols-2">
-        {cards.map((card, i) => (
-          <li
-            key={i}
-            className="flex items-start gap-4 rounded-xl bg-white p-4 border border-gray-border transition-shadow hover:shadow-sm"
-          >
-            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-orange/10 text-orange">
-              {ICONS[card.icon]}
-            </span>
-            <p className="text-sm font-medium text-navy leading-snug pt-2">{card.title}</p>
-          </li>
-        ))}
-      </ul>
+    <section className="bg-bg px-6 py-10">
+      <div className="mx-auto max-w-[1100px]">
+        <SectionHeading
+          title={`Услуги ${serviceLabel}`}
+          subtitle="Выполняем работы любой сложности на дому"
+        />
+        <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {cards.map((card, i) => (
+            <li
+              key={i}
+              className="flex items-start gap-4 rounded-xl border border-border bg-surface p-5 shadow-[0_1px_3px_rgba(0,0,0,0.06)]"
+            >
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-accent-light text-accent">
+                {ICONS[card.icon]}
+              </span>
+              <p className="pt-1.5 text-sm font-medium leading-snug text-ink">{card.title}</p>
+            </li>
+          ))}
+        </ul>
+      </div>
     </section>
   );
 }

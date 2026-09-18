@@ -1,32 +1,28 @@
-import Script from "next/script";
+/**
+ * Яндекс.Метрика. Рендерится как обычный inline <script> в статичном HTML,
+ * чтобы счётчик присутствовал в исходном коде страницы (важно для проверки
+ * счётчика Яндексом) и выполнялся сразу при разборе страницы, а не только
+ * после гидрации. ID берётся из env, с запасным значением, чтобы счётчик
+ * не «отваливался» при проблемах со сборочным окружением.
+ */
+
+const YM_ID = process.env.NEXT_PUBLIC_YM_ID || "110026692";
 
 export default function YandexMetrika() {
-  const ymId = process.env.NEXT_PUBLIC_YM_ID;
-
-  if (!ymId) {
+  if (!YM_ID) {
     return null;
   }
 
+  const script = `(function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};m[i].l=1*new Date();for(var j=0;j<document.scripts.length;j++){if(document.scripts[j].src===r){return;}}k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)})(window,document,"script","https://mc.yandex.ru/metrika/tag.js","ym");ym(${YM_ID},"init",{clickmap:true,trackLinks:true,accurateTrackBounce:true});`;
+
   return (
     <>
-      <Script id="yandex-metrika" strategy="afterInteractive">
-        {`
-          (function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
-          m[i].l=1*new Date();
-          for (var j = 0; j < document.scripts.length; j++) {if (document.scripts[j].src === r) { return; }}
-          k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)})
-          (window, document, "script", "https://mc.yandex.ru/metrika/tag.js", "ym");
-          ym(${ymId}, "init", {
-            clickmap: true,
-            trackLinks: true,
-            accurateTrackBounce: true
-          });
-        `}
-      </Script>
+      <script id="yandex-metrika" dangerouslySetInnerHTML={{ __html: script }} />
       <noscript>
         <div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={`https://mc.yandex.ru/watch/${ymId}`}
+            src={`https://mc.yandex.ru/watch/${YM_ID}`}
             style={{ position: "absolute", left: "-9999px" }}
             alt=""
           />

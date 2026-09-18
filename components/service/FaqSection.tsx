@@ -14,27 +14,22 @@ export default function FaqSection({ faqs }: FaqSectionProps) {
   if (items.length === 0) return null;
 
   return (
-    <section className="rounded-2xl bg-white border border-gray-border p-6 sm:p-8">
-      <SectionHeading title="Частые вопросы" />
-      <div className="space-y-3">
-        {items.map((faq, i) => (
-          <details
-            key={i}
-            className="group rounded-xl border border-gray-border bg-gray-card open:bg-white"
-          >
-            <summary className="cursor-pointer px-5 py-4 font-medium text-navy select-none list-none [&::-webkit-details-marker]:hidden">
-              <span className="flex items-center justify-between gap-3">
+    <section className="bg-bg px-6 py-10">
+      <div className="mx-auto max-w-[720px]">
+        <SectionHeading title="Частые вопросы" />
+        <div>
+          {items.map((faq, i) => (
+            <details key={i} className="group border-b border-border">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 py-[1.125rem] text-base font-semibold text-ink [&::-webkit-details-marker]:hidden">
                 {faq.question}
-                <span className="shrink-0 text-orange transition-transform group-open:rotate-45 text-xl leading-none">
+                <span className="shrink-0 text-xl font-light leading-none text-accent transition-transform group-open:rotate-45">
                   +
                 </span>
-              </span>
-            </summary>
-            <div className="border-t border-gray-border px-5 py-4 text-sm text-navy-muted leading-relaxed">
-              {faq.answer}
-            </div>
-          </details>
-        ))}
+              </summary>
+              <div className="pb-4 text-[0.9375rem] leading-relaxed text-muted">{faq.answer}</div>
+            </details>
+          ))}
+        </div>
       </div>
     </section>
   );

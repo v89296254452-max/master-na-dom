@@ -4,8 +4,23 @@ import { getSiteUrl } from "../site";
 import { BRAND } from "../service-templates";
 import { getBrandLogoUrl } from "../brand";
 import { CONTACT_EMAIL, getOfficeAddress, getOfficeForCity } from "../offices";
-import { getExtendedFaqs } from "./faqs";
-import { getAverageRating, getReviewCount, getServiceReviews } from "./reviews";
+import { getExtendedFaqs, VISIBLE_FAQ_LIMIT } from "./faqs";
+import { getExtendedPrices } from "./prices";
+import { getRealAggregate, getRealReviews } from "./real-reviews";
+
+/** Первое целое число из строки цены («от 1 200 ₽» → 1200). */
+/**
+ * Число из строки цены — только если это ДЕНЬГИ (есть ₽/руб).
+ * Без этой проверки «Гарантия: до 12 месяцев» превращалась в Offer на 12 ₽ и
+ * ломала lowPrice в AggregateOffer (в сниппете «от 12 ₽» вместо «от 600 ₽»).
+ * «бесплатно»/«без доплат» тоже не цены — вернут null.
+ */
+function parsePriceNumber(value: string): number | null {
+  const v = value || "";
+  if (!/₽|руб/i.test(v)) return null;
+  const digits = v.replace(/\s/g, "").match(/\d+/);
+  return digits ? parseInt(digits[0], 10) : null;
+}
 
 function brandLogoAbsoluteUrl(): string {
   const siteUrl = getSiteUrl();
@@ -31,15 +46,20 @@ export function buildBreadcrumbJsonLd(
   cityPrepositional: string
 ) {
   const siteUrl = getSiteUrl();
+  const serviceSlug = getServiceSlug(page);
 
+  // 4 уровня — синхронно с видимыми крошками на странице (иначе Google
+  // игнорирует крошку в сниппете при рассинхроне).
   return {
     "@context": "https://schema.org",
     "@type": "BreadcrumbList",
     itemListElement: [
       { "@type": "ListItem", position: 1, name: "Главная", item: siteUrl },
+      { "@type": "ListItem", position: 2, name: "Услуги", item: `${siteUrl}/uslugi` },
+      { "@type": "ListItem", position: 3, name: service, item: `${siteUrl}/uslugi/${serviceSlug}` },
       {
         "@type": "ListItem",
-        position: 2,
+        position: 4,
         name: `${service} в ${cityPrepositional}`,
         item: `${siteUrl}/${page.slug}`,
       },
@@ -51,10 +71,11 @@ export function buildLocalBusinessJsonLd(page: Page) {
   const siteUrl = getSiteUrl();
   const districts = getDistrictsList(page.districts);
   const phone = getPhone(page.phone);
-  const rating = getAverageRating(page);
-  const reviewCount = getReviewCount(page);
   const address = buildAddressBlock(page);
 
+  // AggregateRating/Review — ТОЛЬКО из реальных отзывов (data/real-reviews.json).
+  // Нет данных → разметки рейтинга нет: выдуманные звёзды = ручная санкция.
+  // Как появятся реальные отзывы (Яндекс.Бизнес) — включится автоматически.
   const jsonLd: Record<string, unknown> = {
     "@context": "https://schema.org",
     "@type": "LocalBusiness",
@@ -70,14 +91,28 @@ export function buildLocalBusinessJsonLd(page: Page) {
       name: `${district}, ${page.city || ""}`,
     })),
     priceRange: "$$",
-    aggregateRating: {
+  };
+
+  const agg = getRealAggregate(page.city, page.serviceSlug);
+  if (agg) {
+    jsonLd.aggregateRating = {
       "@type": "AggregateRating",
-      ratingValue: String(rating),
-      reviewCount: String(reviewCount),
+      ratingValue: agg.ratingValue,
+      reviewCount: agg.reviewCount,
       bestRating: "5",
       worstRating: "1",
-    },
-  };
+    };
+    const rs = getRealReviews(page.city, page.serviceSlug).slice(0, 5);
+    if (rs.length) {
+      jsonLd.review = rs.map((r) => ({
+        "@type": "Review",
+        author: { "@type": "Person", name: r.author },
+        datePublished: r.date,
+        reviewBody: r.text,
+        reviewRating: { "@type": "Rating", ratingValue: String(r.rating), bestRating: "5", worstRating: "1" },
+      }));
+    }
+  }
 
   if (address) {
     jsonLd.address = address;
@@ -123,11 +158,43 @@ export function buildServiceJsonLd(page: Page) {
     },
     url: `${siteUrl}/${page.slug}`,
     serviceType: serviceSlug,
+    ...buildServiceOffers(page),
+  };
+}
+
+/** Прайс услуги → OfferCatalog + AggregateOffer с минимальной ценой. */
+function buildServiceOffers(page: Page): Record<string, unknown> {
+  const rows = getExtendedPrices(page)
+    .map((r) => ({ name: r.name, price: parsePriceNumber(r.value) }))
+    .filter((r): r is { name: string; price: number } => r.price !== null && r.price > 0);
+  if (rows.length === 0) return {};
+
+  const low = Math.min(...rows.map((r) => r.price));
+  return {
+    offers: {
+      "@type": "AggregateOffer",
+      priceCurrency: "RUB",
+      lowPrice: low,
+      offerCount: rows.length,
+      offers: rows.slice(0, 15).map((r) => ({
+        "@type": "Offer",
+        name: r.name,
+        priceCurrency: "RUB",
+        price: r.price,
+        priceSpecification: {
+          "@type": "PriceSpecification",
+          priceCurrency: "RUB",
+          minPrice: r.price,
+        },
+      })),
+    },
   };
 }
 
 export function buildFaqJsonLd(page: Page) {
-  const faqs = getExtendedFaqs(page);
+  // ТОЛЬКО видимые на странице вопросы: getExtendedFaqs отдаёт до 35, а рендерится
+  // VISIBLE_FAQ_LIMIT. Разметка со скрытыми вопросами = невалидный rich-сниппет.
+  const faqs = getExtendedFaqs(page).slice(0, VISIBLE_FAQ_LIMIT);
   if (faqs.length === 0) return null;
 
   return {
@@ -141,33 +208,14 @@ export function buildFaqJsonLd(page: Page) {
   };
 }
 
-export function buildReviewJsonLd(page: Page) {
-  const reviews = getServiceReviews(page, 5);
-  const siteUrl = getSiteUrl();
+// buildReviewJsonLd удалён: строил Review-разметку из ПРОГРАММНО сгенерённых
+// (фейковых) отзывов. Реальные отзывы теперь идут через lib/seo/real-reviews.ts
+// и подключаются в buildLocalBusinessJsonLd только при наличии данных.
 
-  return reviews.map((review) => ({
-    "@context": "https://schema.org",
-    "@type": "Review",
-    itemReviewed: {
-      "@type": "LocalBusiness",
-      name: `${page.service} в ${page.cityPrepositional || page.city} — ${BRAND}`,
-      url: `${siteUrl}/${page.slug}`,
-    },
-    author: { "@type": "Person", name: review.name },
-    reviewRating: {
-      "@type": "Rating",
-      ratingValue: String(review.rating),
-      bestRating: "5",
-    },
-    reviewBody: review.text,
-    datePublished: review.date,
-  }));
-}
-
-export function buildOrganizationJsonLd(page: Page) {
+export function buildOrganizationJsonLd(page?: Page) {
   const siteUrl = getSiteUrl();
-  const phone = getPhone(page.phone);
-  const address = buildAddressBlock(page);
+  const phone = getPhone(page?.phone);
+  const address = page ? buildAddressBlock(page) : undefined;
 
   const org: Record<string, unknown> = {
     "@context": "https://schema.org",
@@ -185,6 +233,14 @@ export function buildOrganizationJsonLd(page: Page) {
       areaServed: "RU",
     },
   };
+
+  // Соцпрофили и юр-реквизиты — из env (задать, когда появятся):
+  //   ORG_SAMEAS="https://vk.com/...,https://dzen.ru/..."
+  //   ORG_LEGAL_NAME="ИП Иванов И.И."   ORG_INN="1234567890"
+  const sameAs = (process.env.ORG_SAMEAS || "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (sameAs.length) org.sameAs = sameAs;
+  if (process.env.ORG_LEGAL_NAME) org.legalName = process.env.ORG_LEGAL_NAME;
+  if (process.env.ORG_INN) org.taxID = process.env.ORG_INN;
 
   if (address) {
     org.address = address;
@@ -217,7 +273,7 @@ export function buildAllPageJsonLd(page: Page, service: string, cityPrepositiona
     buildFaqJsonLd(page),
     buildOrganizationJsonLd(page),
     buildWebsiteJsonLd(),
-    ...buildReviewJsonLd(page),
+    // Review-разметку намеренно не включаем (см. buildLocalBusinessJsonLd).
   ].filter(Boolean);
 
   return schemas;

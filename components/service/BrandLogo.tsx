@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 
 interface BrandLogoProps {
   src: string;
@@ -23,15 +24,29 @@ export default function BrandLogo({
   const currentSrc = failed ? "/assets/logo-promaster.svg" : src;
   const raster = isRasterLogo(currentSrc);
 
-  return (
+  // SVG-фолбэк отдаём как есть (инверсия под тёмный hero), без оптимизатора.
+  if (!raster) {
     // eslint-disable-next-line @next/next/no-img-element
-    <img
+    return (
+      <img
+        src={currentSrc}
+        alt="ПроМастер"
+        width={width}
+        height={height}
+        className={`${className} brightness-0 invert`}
+      />
+    );
+  }
+
+  return (
+    <Image
       src={currentSrc}
       alt="ПроМастер"
       width={width}
       height={height}
       onError={() => setFailed(true)}
-      className={`${className}${raster ? "" : " brightness-0 invert"}`}
+      className={className}
+      priority
     />
   );
 }

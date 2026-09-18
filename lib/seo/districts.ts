@@ -2,6 +2,7 @@ import type { Page } from "../pages";
 import { getDistrictsList } from "../pages";
 import { slugify } from "../transliterate";
 import { DISTRICTS } from "../service-templates";
+import { getCityFacts } from "../city-facts";
 
 /** Расширенные районы для крупных городов */
 const CITY_DISTRICTS: Record<string, string[]> = {
@@ -31,15 +32,21 @@ export interface DistrictLink {
 }
 
 export function getPageDistricts(page: Page): DistrictLink[] {
+  // Приоритет: реальные районы из датасета city-facts (собран по факту) →
+  // захардкоженные реальные для крупных городов → CSV (устаревшие, часто
+  // одинаковые) → дефолт. Фейковые одинаковые районы CSV больше не выигрывают.
+  const fromFacts = getCityFacts(page.city || "")?.districts || [];
   const fromCsv = getDistrictsList(page.districts);
   const cityDistricts = CITY_DISTRICTS[page.city || ""];
   const defaultDistricts = DISTRICTS.split(",").map((d) => d.trim());
 
-  const names = fromCsv.length
-    ? fromCsv
+  const names = fromFacts.length
+    ? fromFacts
     : cityDistricts?.length
       ? cityDistricts
-      : defaultDistricts;
+      : fromCsv.length
+        ? fromCsv
+        : defaultDistricts;
 
   const slug = page.slug || "";
 

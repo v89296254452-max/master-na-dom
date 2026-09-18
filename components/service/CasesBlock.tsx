@@ -5,44 +5,48 @@ interface CasesBlockProps {
   cases: ServiceCase[];
 }
 
+const LABEL = "text-xs font-semibold uppercase tracking-[0.05em] text-faint";
+
 export default function CasesBlock({ cases }: CasesBlockProps) {
   if (cases.length === 0) return null;
 
   return (
-    <section className="rounded-2xl border border-gray-border bg-white p-6 sm:p-8 shadow-sm">
-      <SectionHeading
-        title="Недавние обращения"
-        subtitle="Примеры выполненных работ наших мастеров"
-      />
-      <div className="grid gap-4 sm:grid-cols-2">
-        {cases.map((item) => (
-          <article
-            key={item.title}
-            className="rounded-xl border border-gray-border bg-gray-card p-5 hover:border-orange/30 transition-colors"
-          >
-            <h3 className="font-semibold text-navy">{item.title}</h3>
-            <dl className="mt-3 space-y-2 text-sm">
-              <div>
-                <dt className="text-navy-muted">Проблема</dt>
-                <dd className="font-medium text-navy">{item.problem}</dd>
-              </div>
-              <div>
-                <dt className="text-navy-muted">Решение</dt>
-                <dd className="font-medium text-navy">{item.solution}</dd>
-              </div>
-              <div className="flex gap-4 pt-1">
+    <section className="bg-bg px-6 py-10">
+      <div className="mx-auto max-w-[1100px]">
+        <SectionHeading
+          title="Недавние обращения"
+          subtitle="Примеры выполненных работ наших мастеров"
+        />
+        <div className="grid gap-4 sm:grid-cols-2">
+          {cases.map((item) => (
+            <article
+              key={item.title}
+              className="rounded-xl border border-border bg-surface p-5 shadow-[0_1px_3px_rgba(0,0,0,0.06)]"
+            >
+              <h3 className="border-b border-border pb-3.5 font-semibold text-ink">{item.title}</h3>
+              <dl className="mt-3.5 space-y-3 text-sm">
                 <div>
-                  <dt className="text-xs text-navy-muted">Стоимость</dt>
-                  <dd className="font-bold text-orange">{item.price}</dd>
+                  <dt className={LABEL}>Проблема</dt>
+                  <dd className="mt-0.5 text-ink">{item.problem}</dd>
                 </div>
                 <div>
-                  <dt className="text-xs text-navy-muted">Время</dt>
-                  <dd className="font-semibold text-navy">{item.duration}</dd>
+                  <dt className={LABEL}>Решение</dt>
+                  <dd className="mt-0.5 text-ink">{item.solution}</dd>
                 </div>
-              </div>
-            </dl>
-          </article>
-        ))}
+                <div className="flex gap-6 pt-1">
+                  <div>
+                    <dt className={LABEL}>Стоимость</dt>
+                    <dd className="mt-0.5 font-semibold text-accent">{item.price}</dd>
+                  </div>
+                  <div>
+                    <dt className={LABEL}>Время</dt>
+                    <dd className="mt-0.5 text-muted">{item.duration}</dd>
+                  </div>
+                </div>
+              </dl>
+            </article>
+          ))}
+        </div>
       </div>
     </section>
   );

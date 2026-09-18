@@ -1,0 +1,9 @@
+﻿--- data/problems-cluster.csv (29017 rows) ---
+slug,service,city,cityDat,problem,problemSlug,title,h1,description
+remont-vodonagrevatelej-moskva-bet-tokom,╨а╨╡╨╝╨╛╨╜╤В ╨▓╨╛╨┤╨╛╨╜╨░╨│╤А╨╡╨▓╨░╤В╨╡╨╗╨╡╨╣,╨Ь╨╛╤Б╨║╨▓╨░,╨Ь╨╛╤Б╨║╨▓╨╡,╨▒╤М╤С╤В ╤В╨╛╨║╨╛╨╝,bet-tokom,╨С╤М╤С╤В ╤В╨╛╨║╨╛╨╝ ╨▓ ╨Ь╨╛╤Б╨║╨▓╨╡ тАФ ╨▓╤Л╨╖╨╛╨▓ ╨╝╨░╤Б╤В╨╡╤А╨░ ╨╜╨░ ╨┤╨╛╨╝ | ╨Я╤А╨╛╨Ь╨░╤Б╤В╨╡╤А,╨С╤М╤С╤В ╤В╨╛╨║╨╛╨╝ ╨▓ ╨Ь╨╛╤Б╨║╨▓╨╡ тАФ ╤А╨╡╨╝╨╛╨╜╤В ╨▓╨╛╨┤╨╛╨╜╨░╨│╤А╨╡╨▓╨░╤В╨╡╨╗╨╡╨╣
+--- data/brand-pages.csv (57754 rows) ---
+slug,service,serviceSlug,brand,city,cityDat
+remont-televizorov-samsung-abakan,╨а╨╡╨╝╨╛╨╜╤В ╤В╨╡╨╗╨╡╨▓╨╕╨╖╨╛╤А╨╛╨▓,remont-televizorov,Samsung,╨Р╨▒╨░╨║╨░╨╜,╨Р╨▒╨░╨║╨░╨╜╨╡
+--- data/pages-registry.csv (4186 rows) ---
+city,service,serviceSlug,phone,url,slug,title,description
+╨Р╨▒╨░╨║╨░╨╜,╨Ъ╨╛╨╝╨┐╤М╤О╤В╨╡╤А╨╜╨░╤П ╨┐╨╛╨╝╨╛╤Й╤М,kp,+7 (986) 089-07-04,https://master-na-dom.online/kp-abakan,kp-abakan,╨Ъ╨╛╨╝╨┐╤М╤О╤В╨╡╤А╨╜╨░╤П ╨┐╨╛╨╝╨╛╤Й╤М ╨▓ ╨Р╨▒╨░╨║╨░╨╜╨╡ | ╨Я╤А╨╛╨Ь╨░╤Б╤В╨╡╤А,"╨Ъ╨╛╨╝╨┐╤М╤О╤В╨╡╤А╨╜╨░╤П ╨┐╨╛╨╝╨╛╤Й╤М ╨▓ ╨Р╨▒╨░╨║╨░╨╜╨╡ ╤Б ╨▓╤Л╨╡╨╖╨┤╨╛╨╝ ╨╜╨░ ╨┤╨╛╨╝. ╨Э╨░╤Б╤В╤А╨╛╨╣╨║╨░ ╨Я

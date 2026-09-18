@@ -40,12 +40,12 @@ const CATEGORY_FILES: Record<"hero" | "work" | "details", readonly string[]> = {
 const PAGE_THEMES = [
   { gradientFrom: "#0ea5e9", gradientTo: "#0369a1", accent: "#38bdf8" },
   { gradientFrom: "#6366f1", gradientTo: "#4338ca", accent: "#818cf8" },
-  { gradientFrom: "#f97316", gradientTo: "#c2410c", accent: "#fb923c" },
+  { gradientFrom: "#2563eb", gradientTo: "#1d4ed8", accent: "#60a5fa" },
   { gradientFrom: "#14b8a6", gradientTo: "#0f766e", accent: "#5eead4" },
   { gradientFrom: "#ec4899", gradientTo: "#be185d", accent: "#f472b6" },
   { gradientFrom: "#22c55e", gradientTo: "#15803d", accent: "#4ade80" },
   { gradientFrom: "#64748b", gradientTo: "#334155", accent: "#94a3b8" },
-  { gradientFrom: "#1e3a5f", gradientTo: "#0f172a", accent: "#f97316" },
+  { gradientFrom: "#1e3a5f", gradientTo: "#0f172a", accent: "#60a5fa" },
 ] as const;
 
 interface CatalogItem {
@@ -276,7 +276,7 @@ export function getBrandAssets(): PageVisual[] {
         ...item,
         gradientFrom: "#1e3a5f",
         gradientTo: "#0f172a",
-        accent: "#f97316",
+        accent: "#2563eb",
       };
       return {
         src: pool[index] ?? pool[0] ?? null,

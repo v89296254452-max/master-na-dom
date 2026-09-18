@@ -9,20 +9,22 @@ export default function BrandsBlock({ brands }: BrandsBlockProps) {
   if (brands.length === 0) return null;
 
   return (
-    <section className="rounded-2xl border border-gray-border bg-white p-6 sm:p-8 shadow-sm">
-      <SectionHeading
-        title="Работаем с техникой"
-        subtitle="Ремонт популярных марок бытовой техники"
-      />
-      <div className="flex flex-wrap gap-2">
-        {brands.map((brand) => (
-          <span
-            key={brand.slug}
-            className="rounded-full border border-gray-border bg-gray-card px-4 py-2.5 text-sm font-semibold text-navy"
-          >
-            {brand.name}
-          </span>
-        ))}
+    <section className="bg-surface px-6 py-10">
+      <div className="mx-auto max-w-[1100px]">
+        <SectionHeading
+          title="Работаем с техникой"
+          subtitle="Ремонт популярных марок бытовой техники"
+        />
+        <div className="flex flex-wrap gap-2">
+          {brands.map((brand) => (
+            <span
+              key={brand.slug}
+              className="rounded-full border border-border bg-bg px-4 py-2 text-sm font-semibold text-ink"
+            >
+              {brand.name}
+            </span>
+          ))}
+        </div>
       </div>
     </section>
   );

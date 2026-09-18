@@ -1,0 +1,4 @@
+date,file,change,scope,deployed
+2026-09-16,lib/seo/city-content.ts,"Made climate_note hook service-aware: only Ремонт кондиционеров/Ремонт окон now show it, removed for all other services (see reports/low-value-local-content.csv)",ALL 2550 SERVICE_CITY pages (not just the 856 noindex ones),"NO - committed to git, NOT deployed to production"
+pending,data/ai-content.json (via scripts/generate-ai-content.mjs),Generate >=4 unique AI paragraphs for 30 experimental noindex URLs,30 EXPERIMENTAL URLs in reports/noindex-experiment.csv,"NOT STARTED - requires non-RU IP + OpenRouter key, must run locally by user, not from this server"
+pending,robots index flip (automatic once ai-content.db has >=4 paragraphs),"Experimental pages will automatically leave noindex once real content exists - no code change needed, gate is already correct",30 EXPERIMENTAL URLs,NOT STARTED - depends on content generation above

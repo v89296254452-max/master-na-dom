@@ -1,35 +1,42 @@
 import fs from "fs";
 import path from "path";
 
-const dir = path.join(process.cwd(), ".next");
+const DIRS = [".next", ".next-dev"];
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function main() {
+async function removeDir(name) {
+  const dir = path.join(process.cwd(), name);
   if (!fs.existsSync(dir)) {
-    console.log(".next already absent");
+    console.log(`${name} already absent`);
     return;
   }
 
   for (let attempt = 1; attempt <= 5; attempt++) {
     try {
       fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-      console.log("Removed .next");
+      console.log(`Removed ${name}`);
       return;
     } catch (error) {
       if (attempt === 5) {
         throw error;
       }
-      console.warn(`Retry ${attempt}/5 removing .next...`);
+      console.warn(`Retry ${attempt}/5 removing ${name}...`);
       await sleep(500 * attempt);
     }
   }
 }
 
+async function main() {
+  for (const name of DIRS) {
+    await removeDir(name);
+  }
+}
+
 main().catch((error) => {
-  console.error("Failed to remove .next:", error.message);
-  console.error("Stop all node/next processes and run: npm run build:clean");
+  console.error("Failed to remove Next.js cache:", error.message);
+  console.error("Stop this project's next processes and run: npm run build:clean");
   process.exit(1);
 });
