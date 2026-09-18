@@ -199,7 +199,8 @@ wait_healthy() {
   return 1
 }
 
-PREVIOUS_RELEASE="$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)"
+PREVIOUS_RELEASE=""
+[[ -L "$CURRENT_LINK" ]] && PREVIOUS_RELEASE="$(readlink -f "$CURRENT_LINK")"
 OLD_PM2_CWD="$(pm2_cwd)"
 MIGRATING=0
 [[ "$OLD_PM2_CWD" != "$CURRENT_LINK" ]] && MIGRATING=1
